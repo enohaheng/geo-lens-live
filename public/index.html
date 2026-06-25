@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GEO Lens | AI 可见性诊断台</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #070b0d;
+      --panel: rgba(14, 23, 26, .86);
+      --panel2: rgba(20, 31, 35, .84);
+      --line: rgba(178, 220, 205, .16);
+      --line2: rgba(178, 220, 205, .28);
+      --ink: #ecf8f3;
+      --muted: #8ea49c;
+      --green: #39d79e;
+      --cyan: #4cc9f0;
+      --amber: #f0b45a;
+      --red: #ff735f;
+      --shadow: 0 24px 70px rgba(0,0,0,.38);
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px),
+        radial-gradient(circle at 75% 0%, rgba(57,215,158,.22), transparent 30%),
+        radial-gradient(circle at 5% 18%, rgba(76,201,240,.14), transparent 24%),
+        #070b0d;
+      background-size: 36px 36px, 36px 36px, auto, auto, auto;
+    }
+    svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
+    .app { width: min(1280px, calc(100% - 28px)); margin: 0 auto; padding: 22px 0 52px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .mark { width: 46px; aspect-ratio: 1; display: grid; place-items: center; border: 1px solid rgba(57,215,158,.42); border-radius: 12px; color: var(--green); background: linear-gradient(145deg, rgba(57,215,158,.18), rgba(76,201,240,.10)); box-shadow: 0 0 28px rgba(57,215,158,.18); }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin: 0; font-size: clamp(24px, 4vw, 38px); letter-spacing: 0; }
+    .brand p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    button { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid rgba(57,215,158,.42); border-radius: 8px; padding: 10px 14px; color: #04100d; background: linear-gradient(135deg, var(--green), var(--cyan)); font-weight: 850; cursor: pointer; box-shadow: 0 14px 32px rgba(57,215,158,.16); }
+    button.secondary { color: var(--ink); background: rgba(255,255,255,.06); border-color: var(--line2); box-shadow: none; }
+    button.ghost { color: var(--muted); background: transparent; border-color: var(--line); box-shadow: none; }
+    .hero { border: 1px solid var(--line); border-radius: 12px; padding: 22px; margin-bottom: 14px; background: linear-gradient(125deg, rgba(57,215,158,.14), rgba(76,201,240,.08) 42%, rgba(255,255,255,.045)); box-shadow: var(--shadow); position: relative; overflow: hidden; }
+    .hero:after { content: ""; position: absolute; right: -70px; top: -90px; width: 250px; height: 250px; border: 1px solid rgba(57,215,158,.18); border-radius: 36px; transform: rotate(22deg); }
+    .kicker { display: inline-flex; align-items: center; gap: 8px; color: var(--green); font-size: 12px; font-weight: 900; text-transform: uppercase; margin-bottom: 14px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 14px rgba(57,215,158,.8); }
+    .hero h2 { position: relative; z-index: 1; max-width: 780px; margin: 0; font-size: clamp(30px, 5vw, 54px); line-height: 1.08; letter-spacing: 0; }
+    .hero h2 span { color: var(--green); }
+    .layout { display: grid; grid-template-columns: minmax(340px, 430px) 1fr; gap: 14px; }
+    .panel { border: 1px solid var(--line); border-radius: 12px; padding: 16px; background: var(--panel); box-shadow: var(--shadow); backdrop-filter: blur(18px); }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+    .panel-title { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 17px; }
+    .panel-title svg { color: var(--green); }
+    .stack { display: grid; gap: 12px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    label { display: grid; gap: 7px; color: #b9cdc5; font-size: 13px; font-weight: 800; }
+    input, textarea, select { width: 100%; border: 1px solid rgba(178,220,205,.16); border-radius: 8px; padding: 11px 12px; color: var(--ink); background: rgba(3,9,10,.56); font: inherit; outline: none; }
+    textarea { min-height: 74px; resize: vertical; }
+    .tall { min-height: 148px; }
+    input:focus, textarea:focus, select:focus { border-color: rgba(57,215,158,.62); box-shadow: 0 0 0 3px rgba(57,215,158,.10); }
+    .probe { display: grid; gap: 10px; border: 1px solid rgba(57,215,158,.22); border-radius: 10px; padding: 12px; background: linear-gradient(90deg, rgba(57,215,158,.09), rgba(76,201,240,.06)); }
+    .probe-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .probe-title { display: flex; align-items: center; gap: 8px; color: var(--green); font-size: 13px; font-weight: 900; }
+    .status-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .status-card { border: 1px solid rgba(178,220,205,.14); border-radius: 8px; padding: 9px; background: rgba(3,9,10,.36); color: var(--muted); font-size: 12px; font-weight: 800; }
+    .status-card strong { display: block; margin-top: 4px; color: var(--ink); font-size: 13px; }
+    .status-card.ok strong { color: var(--green); }
+    .status-card.warn strong { color: var(--amber); }
+    .note { color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .work { display: grid; gap: 14px; align-content: start; }
+    .empty { min-height: 240px; display: grid; place-items: center; text-align: center; color: var(--muted); border: 1px dashed rgba(178,220,205,.18); border-radius: 10px; background: rgba(3,9,10,.28); }
+    .result-head { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: center; }
+    .score-ring { width: 158px; aspect-ratio: 1; border-radius: 50%; display: grid; place-items: center; background: radial-gradient(circle at center, #070b0d 0 58%, transparent 59%), conic-gradient(var(--green) calc(var(--score) * 1%), rgba(178,220,205,.13) 0); box-shadow: 0 0 42px rgba(57,215,158,.10); }
+    .score-ring strong { display: block; color: var(--green); font-size: 50px; line-height: 1; text-align: center; }
+    .score-ring span { display: block; color: var(--muted); font-size: 12px; font-weight: 900; text-align: center; }
+    .metrics { display: grid; grid-template-columns: repeat(5, minmax(106px, 1fr)); gap: 10px; margin-top: 16px; }
+    .metric { border: 1px solid rgba(178,220,205,.14); border-radius: 9px; padding: 12px; background: rgba(3,9,10,.38); }
+    .metric span { color: var(--muted); font-size: 12px; font-weight: 850; }
+    .bar { height: 8px; border-radius: 99px; margin: 11px 0 8px; background: rgba(178,220,205,.12); overflow: hidden; }
+    .bar i { display: block; width: var(--value); height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--green), var(--cyan)); }
+    .metric strong { font-size: 24px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { border-bottom: 1px solid rgba(178,220,205,.12); padding: 10px; text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 12px; font-weight: 900; }
+    td { color: #dce9e4; }
+    .finding { border: 1px solid rgba(178,220,205,.12); border-left: 4px solid var(--amber); border-radius: 9px; padding: 13px 14px; margin: 10px 0; background: linear-gradient(90deg, rgba(240,180,90,.08), transparent 42%), rgba(3,9,10,.34); }
+    .tag { display: inline-flex; border-radius: 999px; padding: 3px 8px; color: #150704; background: var(--amber); font-size: 12px; font-weight: 900; }
+    .evidence, code { color: var(--muted); font-size: 12px; word-break: break-all; }
+    @media (max-width: 980px) { .topbar, .layout, .result-head { display: grid; grid-template-columns: 1fr; } .actions { justify-content: flex-start; } .metrics { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 620px) { .app { width: min(100% - 18px, 1280px); } .grid2, .status-grid, .metrics { grid-template-columns: 1fr; } .actions button { flex: 1 1 auto; } .score-ring { width: 140px; } table { font-size: 13px; } th, td { padding: 8px; } }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 16 0 8 8 0 0 0-16 0Z"/><path d="M12 8v4l3 2"/><path d="M4.5 19.5 8 16"/></svg></div>
+        <div><h1>GEO Lens</h1><p>AI Visibility Command Center</p></div>
+      </div>
+      <div class="actions">
+        <button class="secondary" id="loadSample" type="button"><svg viewBox="0 0 24 24"><path d="M4 4h16v6H4z"/><path d="M4 14h7v6H4z"/><path d="M15 14h5v6h-5z"/></svg>示例</button>
+        <button id="runAudit" type="button"><svg viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/><path d="M4 4h16v16H4z"/></svg>生成诊断</button>
+        <button class="ghost" id="clearAll" type="button"><svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 15h10l1-15"/></svg>清空</button>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div class="kicker"><span class="dot"></span>Evidence-first scoring engine</div>
+      <h2>把商户在 AI 里的可见性，压缩成 <span>分数、证据、动作</span></h2>
+    </section>
+
+    <section class="layout">
+      <section class="panel">
+        <div class="panel-head"><h2 class="panel-title"><svg viewBox="0 0 24 24"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h10"/></svg>诊断输入</h2></div>
+        <div class="probe">
+          <div class="probe-row">
+            <div class="probe-title"><span class="dot"></span>Live AI Probe</div>
+            <button class="secondary" id="autoProbe" type="button">联网探测</button>
+          </div>
+          <div class="status-grid" id="runtimeStatus">
+            <div class="status-card warn">豆包<strong>检测中</strong></div>
+            <div class="status-card warn">搜索<strong>检测中</strong></div>
+            <div class="status-card warn">访问码<strong>检测中</strong></div>
+            <div class="status-card warn">缓存/限流<strong>检测中</strong></div>
+          </div>
+          <label>访问码<input id="accessCode" type="password" placeholder="公网部署后填写访问码；本地未启用可留空"></label>
+          <div class="note" id="probeStatus">输入名称并选择城市、区域后，优先联网检索并调用豆包；未启用时才降级本地模拟。</div>
+        </div>
+
+        <div class="stack" style="margin-top:12px">
+          <label>产品/商户名称<input id="merchantName" placeholder="例如：茶百道 / 某某口腔 / 某某健身"></label>
+          <div class="grid2">
+            <label>城市<select id="city"><option value="">选择城市</option></select></label>
+            <label>区域<select id="district"><option value="">选择区域</option></select></label>
+          </div>
+          <label>行业品类<input id="category" placeholder="自动识别，例如奶茶/新茶饮"></label>
+          <label>核心卖点<textarea id="sellingPoints" placeholder="联网诊断后自动生成"></textarea></label>
+          <label>竞品<textarea id="competitors" placeholder="联网诊断后自动生成"></textarea></label>
+          <label>场景关键词<textarea id="scenarios" placeholder="联网诊断后自动生成"></textarea></label>
+          <div class="grid2">
+            <label>评分<input id="rating" placeholder="联网诊断后自动生成"></label>
+            <label>评论数<input id="reviewCount" placeholder="联网诊断后自动生成"></label>
+          </div>
+          <label>基础事实<textarea id="facts" placeholder="联网诊断后自动生成"></textarea></label>
+          <label>来源/资料证据<textarea id="sources" placeholder="联网诊断后自动生成"></textarea></label>
+          <label>AI 测试回答<textarea id="aiAnswers" class="tall" placeholder="联网诊断后自动生成"></textarea></label>
+        </div>
+      </section>
+
+      <section class="work">
+        <section class="panel" id="summaryPanel"><div class="empty">等待生成诊断</div></section>
+        <section class="panel" id="competitorPanel"></section>
+        <section class="panel" id="findingsPanel"></section>
+        <section class="panel" id="recommendPanel"></section>
+        <section class="panel" id="evidencePanel"></section>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const fields = ["merchantName","city","district","category","sellingPoints","competitors","scenarios","rating","reviewCount","facts","sources","aiAnswers","accessCode"];
+    let latestRun = null;
+    let currentDataMode = "manual";
+
+    const areaData = {
+      "上海": ["黄浦区", "徐汇区", "长宁区", "静安区", "普陀区", "浦东新区", "闵行区", "杨浦区"],
+      "北京": ["朝阳区", "海淀区", "东城区", "西城区", "丰台区", "通州区", "昌平区"],
+      "深圳": ["南山区", "福田区", "罗湖区", "宝安区", "龙岗区", "龙华区"],
+      "广州": ["天河区", "越秀区", "海珠区", "番禺区", "白云区", "荔湾区"],
+      "杭州": ["西湖区", "上城区", "拱墅区", "滨江区", "萧山区", "余杭区"],
+      "成都": ["锦江区", "青羊区", "武侯区", "成华区", "高新区", "金牛区"],
+      "无锡": ["梁溪区", "滨湖区", "新吴区", "锡山区", "惠山区", "江阴市", "宜兴市", "经开区"]
+    };
+
+    const sample = {
+      merchantName: "茶百道",
+      city: "无锡",
+      district: "梁溪区",
+      category: "",
+      sellingPoints: "",
+      competitors: "",
+      scenarios: "",
+      rating: "",
+      reviewCount: "",
+      facts: "",
+      sources: "",
+      aiAnswers: ""
+    };
+
+    function lines(value) {
+      return String(value || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+    }
+    function normalize(value) { return String(value || "").trim().toLowerCase(); }
+    function unique(values) { return [...new Set(values.map(v => String(v || "").trim()).filter(Boolean))]; }
+    function fillCityOptions() {
+      $("city").innerHTML = '<option value="">选择城市</option>' + Object.keys(areaData).map(city => `<option value="${city}">${city}</option>`).join("");
+      fillDistrictOptions("");
+    }
+    function fillDistrictOptions(city, selected = "") {
+      const districts = areaData[city] || [];
+      $("district").innerHTML = '<option value="">选择区域</option>' + districts.map(name => `<option value="${name}">${name}</option>`).join("");
+      if (selected && districts.includes(selected)) $("district").value = selected;
+    }
+    function seedFrom(value) {
+      let seed = 0;
+      for (const ch of String(value || "")) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
+      return seed;
+    }
+    function inferCategory(name, current) {
+      if (current) return current;
+      if (/茶百道|喜茶|奈雪|霸王茶姬|蜜雪|古茗|沪上阿姨|一点点|茶颜悦色|书亦|益禾堂|CoCo|coco|奶茶|茶饮/.test(name)) return "奶茶/新茶饮";
+      if (/火锅/.test(name)) return "火锅店";
+      if (/口腔|牙|诊所/.test(name)) return "口腔诊所";
+      if (/健身|瑜伽|普拉提/.test(name)) return "健身房";
+      return "本地商户";
+    }
+    function localProfile() {
+      const name = $("merchantName").value.trim();
+      const city = $("city").value.trim();
+      const district = $("district").value.trim();
+      if (!name || !city || !district) return null;
+      const category = inferCategory(name, $("category").value.trim());
+      const seed = seedFrom(name + city + district);
+      const rating = (4.0 + (seed % 7) / 10).toFixed(1);
+      const reviewCount = 260 + (seed % 900);
+      const isTea = /奶茶|茶饮/.test(category);
+      const selling = isTea ? ["鲜果茶", "现制奶茶", "外卖便利", "年轻客群", "高性价比"] : ["位置便利", "服务稳定", "本地客群", "评价基础", "场景适配"];
+      const comps = isTea ? ["喜茶", "奈雪的茶", "霸王茶姬", "蜜雪冰城", "古茗"] : [`${district}热门商户A`, `${district}同品类商户B`, "商圈标杆商户C"];
+      const scenes = isTea ? ["下午茶", "逛街顺手买", "办公室团购", "学生党饮品", "外卖到家"] : ["附近推荐", "朋友聚会", "高性价比", "周末消费", "本地口碑"];
+      return {
+        category, rating, reviewCount,
+        sellingPoints: selling.join("\n"),
+        competitors: comps.join("\n"),
+        scenarios: scenes.join("\n"),
+        facts: [`位置：${city}${district}核心商圈附近`, `品类：${category}`, `评论基础：约 ${reviewCount} 条`, "提示：当前为本地模拟，真实结果请启动 live 后端"].join("\n"),
+        sources: [`本地模拟证据｜${name}｜${city}${district}｜${category}`, "未调用真实搜索 API，正式交付需使用 live backend"].join("\n"),
+        aiAnswers: [`豆包｜${city}${district}${category}推荐？｜本地模拟回答：${name}有一定推荐潜力，但需要补充真实网络证据、评论摘要、热门产品和竞品对比。`].join("\n")
+      };
+    }
+    async function hashText(text) {
+      const data = new TextEncoder().encode(String(text));
+      const digest = await crypto.subtle.digest("SHA-256", data);
+      return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
+    }
+    async function evidence(type, payload) {
+      const timestamp = new Date().toISOString();
+      const hash = await hashText(JSON.stringify({ type, timestamp, payload }));
+      return { id: "E-" + hash.slice(0, 10).toUpperCase(), type, timestamp, hash, ...payload };
+    }
+    function renderRuntimeStatus(status) {
+      const card = (label, ok, value) => `<div class="status-card ${ok ? "ok" : "warn"}">${label}<strong>${value}</strong></div>`;
+      $("runtimeStatus").innerHTML = [
+        card("豆包", status?.doubaoConfigured, status?.doubaoConfigured ? "已接入" : "未配置"),
+        card("搜索", status?.searchConfigured, status?.searchConfigured ? "已接入" : "未配置"),
+        card("访问码", status?.accessCodeEnabled, status?.accessCodeEnabled ? "已启用" : "未启用"),
+        card("缓存/限流", true, `${status?.cacheTtlHours || 24}h / ${status?.rateLimitPerHour || 30}次`)
+      ].join("");
+    }
+    async function loadRuntimeStatus() {
+      if (location.protocol === "file:") return renderRuntimeStatus({ doubaoConfigured:false, searchConfigured:false, accessCodeEnabled:false, cacheTtlHours:24, rateLimitPerHour:30 });
+      try {
+        const res = await fetch("/api/status", { cache: "no-store" });
+        renderRuntimeStatus(await res.json());
+      } catch {
+        renderRuntimeStatus({ doubaoConfigured:false, searchConfigured:false, accessCodeEnabled:false, cacheTtlHours:24, rateLimitPerHour:30 });
+      }
+    }
+    async function autoPopulateAndRun(force = false) {
+      const live = await tryLiveDiagnose(force);
+      if (live) return;
+      const profile = localProfile();
+      if (!profile) {
+        $("probeStatus").textContent = "请先输入名称并选择城市、区域。";
+        return;
+      }
+      currentDataMode = "local";
+      fillProfile(profile);
+      $("probeStatus").textContent = `已切换本地模拟：评分 ${profile.rating}，评论数 ${profile.reviewCount}。真实商用请启动 live 后端。`;
+      if (force) await runAudit();
+    }
+    function fillProfile(data) {
+      $("category").value = data.category || "";
+      $("rating").value = data.rating || "";
+      $("reviewCount").value = data.reviewCount || "";
+      $("sellingPoints").value = Array.isArray(data.sellingPoints) ? data.sellingPoints.join("\n") : data.sellingPoints || "";
+      $("competitors").value = Array.isArray(data.competitors) ? data.competitors.join("\n") : data.competitors || "";
+      $("scenarios").value = Array.isArray(data.scenarios) ? data.scenarios.join("\n") : data.scenarios || "";
+      $("facts").value = Array.isArray(data.facts) ? data.facts.join("\n") : data.facts || "";
+      $("sources").value = Array.isArray(data.sources) ? data.sources.join("\n") : data.sources || "";
+      $("aiAnswers").value = Array.isArray(data.aiAnswers) ? data.aiAnswers.join("\n") : data.aiAnswers || "";
+    }
+    async function tryLiveDiagnose(force = false) {
+      const name = $("merchantName").value.trim();
+      const city = $("city").value.trim();
+      const district = $("district").value.trim();
+      if (!name || !city || !district || location.protocol === "file:") return false;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 45000);
+      try {
+        $("probeStatus").textContent = "正在联网诊断：检索资料、识别行业与竞品、调用豆包...";
+        const accessCode = $("accessCode").value.trim();
+        const res = await fetch("/api/live-diagnose", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-access-code": accessCode },
+          body: JSON.stringify({ name, city, district, category: $("category").value.trim(), accessCode }),
+          signal: controller.signal
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          $("probeStatus").textContent = data?.message || "联网诊断暂不可用。";
+          if (data?.code === "ACCESS_CODE_REQUIRED" || data?.code === "RATE_LIMITED") return true;
+          return false;
+        }
+        currentDataMode = "live";
+        fillProfile(data);
+        const cache = data.cacheHit ? "缓存命中" : "新鲜生成";
+        const remaining = Number.isFinite(data.rateLimitRemaining) ? `，剩余额度 ${data.rateLimitRemaining}` : "";
+        $("probeStatus").textContent = `已完成联网诊断：${data.sourceCount || 0} 条资料，${data.aiAnswerCount || 0} 条豆包回答（${cache}${remaining}）。`;
+        if (force) await runAudit();
+        return true;
+      } catch {
+        $("probeStatus").textContent = "联网诊断失败，已准备切换本地模拟。";
+        return false;
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+    function getInput() {
+      return {
+        mode: currentDataMode,
+        merchant: {
+          name: $("merchantName").value.trim(),
+          city: $("city").value.trim(),
+          district: $("district").value.trim(),
+          category: $("category").value.trim(),
+          sellingPoints: lines($("sellingPoints").value),
+          facts: lines($("facts").value)
+        },
+        competitors: lines($("competitors").value),
+        scenarios: lines($("scenarios").value),
+        rating: Number($("rating").value || 0),
+        reviewCount: Number($("reviewCount").value || 0),
+        sources: lines($("sources").value),
+        aiAnswersRaw: lines($("aiAnswers").value)
+      };
+    }
+    function parseAiAnswers(rows) {
+      return rows.map((row, index) => {
+        const parts = row.split("｜");
+        if (parts.length >= 3) return { provider: parts[0].trim(), question: parts[1].trim(), answer: parts.slice(2).join("｜").trim(), index };
+        return { provider: "AI", question: "未标注问题", answer: row, index };
+      });
+    }
+    function analyze(input, aiAnswers) {
+      const merchant = input.merchant.name;
+      const competitors = unique(input.competitors);
+      const text = normalize([...aiAnswers.map(a => a.answer), ...input.sources, ...input.merchant.facts].join(" "));
+      const total = Math.max(1, aiAnswers.length);
+      const mentioned = aiAnswers.filter(a => normalize(a.answer).includes(normalize(merchant))).length;
+      const compMentions = {};
+      competitors.forEach(c => compMentions[c] = aiAnswers.filter(a => normalize(a.answer).includes(normalize(c))).length);
+      const signalCount = unique([merchant, input.merchant.city, input.merchant.district, input.merchant.category, ...input.scenarios, ...input.merchant.sellingPoints]).filter(s => text.includes(normalize(s))).length;
+      const base = input.mode === "live" ? 58 : 52;
+      const seed = seedFrom(merchant + input.merchant.city);
+      const modules = {
+        aiVisibility: Math.min(72, base + Math.round(mentioned / total * 18) + seed % 5),
+        infoAccuracy: Math.min(76, base + Math.min(16, input.sources.length * 3) + seed % 4),
+        citability: Math.min(74, base + Math.min(18, signalCount * 2)),
+        trustSignals: Math.min(72, base + (input.rating ? 5 : 0) + (input.reviewCount ? 5 : 0) + seed % 4),
+        competitorGap: Math.min(70, base + 8 - Math.round(Object.values(compMentions).reduce((a,b)=>a+b,0) / Math.max(1, competitors.length)))
+      };
+      const totalScore = Math.round(modules.aiVisibility*.3 + modules.infoAccuracy*.2 + modules.citability*.2 + modules.trustSignals*.15 + modules.competitorGap*.15);
+      return { modules, total: totalScore, level: totalScore >= 70 ? "有竞争力" : totalScore >= 55 ? "可优化" : "低可见", competitorMentions: compMentions, diagnostics: { aiAnswers: aiAnswers.length, merchantMentionRate: Math.round(mentioned / total * 100) } };
+    }
+    function buildCompetitors(input, score) {
+      const total = Math.max(1, score.diagnostics.aiAnswers);
+      return unique([input.merchant.name, ...input.competitors]).map(name => {
+        const mentions = name === input.merchant.name ? Math.round(score.diagnostics.merchantMentionRate / 100 * total) : score.competitorMentions[name] || 0;
+        return { name, role: name === input.merchant.name ? "目标商户" : "竞品", mentions, rate: Math.round(mentions / total * 100) };
+      });
+    }
+    function buildFindings(input, score, ids) {
+      const findings = [];
+      if (score.modules.aiVisibility < 65) findings.push({ severity:"High", title:"AI推荐可见性不足", detail:`当前AI测试提及率为 ${score.diagnostics.merchantMentionRate}% ，还不是稳定推荐对象。`, evidenceIds: ids.ai });
+      if (score.modules.citability < 68) findings.push({ severity:"Medium", title:"内容可引用度不足", detail:"场景、卖点、事实和口碑证据需要更结构化，方便AI形成推荐理由。", evidenceIds: [...ids.input, ...ids.source] });
+      if (score.modules.competitorGap < 66) findings.push({ severity:"Medium", title:"竞品优势仍然明显", detail:"同品类竞品更容易被提及，需要补强差异化证据。", evidenceIds: ids.ai });
+      if (!findings.length) findings.push({ severity:"Low", title:"基础表现可继续监测", detail:"建议按月复测同一批问题，观察AI回答和竞品变化。", evidenceIds: [...ids.ai, ...ids.source] });
+      return findings;
+    }
+    function buildRecommendations(score) {
+      const rows = [];
+      if (score.modules.aiVisibility < 70) rows.push(["P1","建立AI可引用资料包","补充品牌简介、门店信息、热门产品、价格带、场景图文。","提升AI推荐概率"]);
+      if (score.modules.infoAccuracy < 70) rows.push(["P1","统一基础信息","同步营业时间、地址、电话、价格、服务设施。","减少AI错误描述"]);
+      if (score.modules.competitorGap < 70) rows.push(["P2","做竞品差异化内容","对比同品类竞品，突出本店真实优势。","提高推荐理由强度"]);
+      rows.push(["P2","持续缓存与复测","同一商户使用缓存，定期强制刷新。","降低成本并追踪变化"]);
+      return rows;
+    }
+    function moduleLabel(key) {
+      return { aiVisibility:"AI可见性", infoAccuracy:"信息准确度", citability:"内容可引用度", trustSignals:"口碑信任", competitorGap:"竞品差距" }[key] || key;
+    }
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+    }
+    async function runAudit() {
+      const input = getInput();
+      if (!input.merchant.name) return alert("请先填写产品/商户名称");
+      const aiAnswers = parseAiAnswers(input.aiAnswersRaw);
+      const evidenceList = [];
+      const inputEv = await evidence("input_profile", { merchant: input.merchant, competitors: input.competitors, scenarios: input.scenarios });
+      evidenceList.push(inputEv);
+      const sourceEvs = [];
+      for (const source of input.sources) { const ev = await evidence("source_note", { source }); sourceEvs.push(ev); evidenceList.push(ev); }
+      const aiEvs = [];
+      for (const answer of aiAnswers) { const ev = await evidence("ai_answer", answer); aiEvs.push(ev); evidenceList.push(ev); }
+      const score = analyze(input, aiAnswers);
+      const ids = { input:[inputEv.id], source:sourceEvs.map(e=>e.id), ai:aiEvs.map(e=>e.id) };
+      latestRun = { createdAt:new Date().toISOString(), input, score, competitors:buildCompetitors(input, score), findings:buildFindings(input, score, ids), recommendations:buildRecommendations(score), evidence:evidenceList };
+      render(latestRun);
+    }
+    function render(run) {
+      $("summaryPanel").innerHTML = `
+        <div class="panel-head"><h2 class="panel-title">诊断结果</h2><div class="actions"><button class="secondary" onclick="downloadJson()">JSON</button><button class="secondary" onclick="window.print()">PDF</button></div></div>
+        <div class="result-head"><div class="score-ring" style="--score:${run.score.total}"><div><strong>${run.score.total}</strong><span>${run.score.level}</span></div></div><div><h2>${escapeHtml(run.input.merchant.name)}</h2><p class="note">当前模式：${run.input.mode === "live" ? "真实联网诊断" : "本地模拟"}。预计可提升 ${Math.max(8, Math.round((100-run.score.total)*.35))}-${Math.min(55, Math.round((100-run.score.total)*.35)+14)}% 的AI搜索曝光机会。</p></div></div>
+        <div class="metrics">${Object.entries(run.score.modules).map(([k,v]) => `<div class="metric"><span>${moduleLabel(k)}</span><div class="bar" style="--value:${v}%"><i></i></div><strong>${v}</strong></div>`).join("")}</div>`;
+      $("competitorPanel").innerHTML = `<div class="panel-head"><h2 class="panel-title">竞品对比</h2></div><table><thead><tr><th>名称</th><th>角色</th><th>AI提及次数</th><th>提及率</th></tr></thead><tbody>${run.competitors.map(c=>`<tr><td>${escapeHtml(c.name)}</td><td>${c.role}</td><td>${c.mentions}</td><td>${c.rate}%</td></tr>`).join("")}</tbody></table>`;
+      $("findingsPanel").innerHTML = `<div class="panel-head"><h2 class="panel-title">核心发现</h2></div>${run.findings.map(f=>`<section class="finding"><div class="tag">${f.severity}</div><h3>${escapeHtml(f.title)}</h3><p>${escapeHtml(f.detail)}</p><p class="evidence">证据：${escapeHtml(f.evidenceIds.join(", ") || "无")}</p></section>`).join("")}`;
+      $("recommendPanel").innerHTML = `<div class="panel-head"><h2 class="panel-title">整改建议</h2></div><table><thead><tr><th>优先级</th><th>建议</th><th>操作</th><th>预计影响</th></tr></thead><tbody>${run.recommendations.map(r=>`<tr><td>${r[0]}</td><td>${escapeHtml(r[1])}</td><td>${escapeHtml(r[2])}</td><td>${escapeHtml(r[3])}</td></tr>`).join("")}</tbody></table>`;
+      $("evidencePanel").innerHTML = `<div class="panel-head"><h2 class="panel-title">证据账本</h2></div><table><thead><tr><th>证据ID</th><th>类型</th><th>时间</th><th>哈希</th></tr></thead><tbody>${run.evidence.map(e=>`<tr><td><code>${e.id}</code></td><td>${e.type}</td><td>${e.timestamp}</td><td><code>${e.hash.slice(0,20)}</code></td></tr>`).join("")}</tbody></table>`;
+    }
+    function download(filename, content, type) {
+      const blob = new Blob([content], { type });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
+    }
+    window.downloadJson = function() {
+      if (!latestRun) return;
+      download(`${latestRun.input.merchant.name}-GEO诊断.json`, JSON.stringify(latestRun, null, 2), "application/json;charset=utf-8");
+    };
+    $("loadSample").addEventListener("click", async () => {
+      $("city").value = sample.city; fillDistrictOptions(sample.city, sample.district);
+      for (const [k,v] of Object.entries(sample)) if (k !== "city" && k !== "district") $(k).value = v;
+      await autoPopulateAndRun(true);
+    });
+    $("runAudit").addEventListener("click", runAudit);
+    $("autoProbe").addEventListener("click", () => autoPopulateAndRun(true));
+    $("city").addEventListener("change", () => fillDistrictOptions($("city").value));
+    $("clearAll").addEventListener("click", () => {
+      fields.forEach(id => $(id).value = "");
+      fillDistrictOptions("");
+      latestRun = null;
+      $("probeStatus").textContent = "输入名称并选择城市、区域后，优先联网检索并调用豆包；未启用时才降级本地模拟。";
+      ["summaryPanel","competitorPanel","findingsPanel","recommendPanel","evidencePanel"].forEach(id => $(id).innerHTML = id === "summaryPanel" ? '<div class="empty">等待生成诊断</div>' : "");
+    });
+    fillCityOptions();
+    loadRuntimeStatus();
+  </script>
+</body>
+</html>
