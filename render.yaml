@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: geo-lens-live
+    env: node
+    plan: starter
+    buildCommand: ""
+    startCommand: "node server.js"
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: ACCESS_CODE
+        sync: false
+      - key: ARK_API_KEY
+        sync: false
+      - key: ARK_MODEL
+        sync: false
+      - key: ARK_BASE_URL
+        value: https://ark.cn-beijing.volces.com/api/v3
+      - key: SERPAPI_KEY
+        sync: false
+      - key: RATE_LIMIT_PER_HOUR
+        value: "30"
+      - key: CACHE_TTL_HOURS
+        value: "24"
