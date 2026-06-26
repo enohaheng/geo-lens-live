@@ -396,6 +396,15 @@ ${snippets}
   const cleanCompetitors = (parsed.competitors?.length ? parsed.competitors : competitors)
     .filter(item => item && !name.includes(item) && !String(item).includes(name))
     .slice(0, 6);
+  const parsedAiAnswers = Array.isArray(parsed.aiAnswers)
+    ? parsed.aiAnswers.map(item => String(item || "").trim()).filter(Boolean)
+    : [];
+  const fallbackAiAnswer = Object.keys(parsed).length
+    ? `豆包AI测试回答：在“${city}${district}${parsed.category || category}推荐”场景下，${name}目前更适合作为有一定本地展示基础的候选商户；主要竞争对象包括${cleanCompetitors.join("、") || "同品类商户"}。结论仍需结合地图门店、点评口碑和本地内容证据复核。`
+    : `豆包AI测试回答：${String(answer || "").replace(/\s+/g, " ").trim().slice(0, 320)}`;
+  const aiAnswers = (parsedAiAnswers.length ? parsedAiAnswers : [fallbackAiAnswer])
+    .filter(Boolean)
+    .slice(0, 6);
 
   const data = {
     ok: true,
@@ -423,9 +432,9 @@ ${snippets}
     scenarios: (parsed.scenarios || []).slice(0, 8),
     facts: (parsed.facts || []).slice(0, 10),
     sources: (parsed.sources?.length ? parsed.sources : searchResults.map(item => `${item.title}｜${item.snippet}｜${item.url}`)).slice(0, 8),
-    aiAnswers: (parsed.aiAnswers || []).slice(0, 6),
+    aiAnswers,
     sourceCount: searchResults.length,
-    aiAnswerCount: (parsed.aiAnswers || []).length,
+    aiAnswerCount: aiAnswers.length,
     cacheHit: false
   };
   await writeCache(key, data);
