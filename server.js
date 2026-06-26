@@ -144,7 +144,7 @@ function fallbackCompetitors(category, name) {
     "健身房": ["乐刻运动", "超级猩猩", "威尔仕健身", "中田健身"],
     "酒店住宿": ["全季酒店", "亚朵酒店", "桔子酒店", "汉庭酒店"]
   };
-  return (map[category] || ["同区高评分商户A", "同品类热门商户B", "商圈标杆商户C"])
+  return (map[category] || [])
     .filter(item => !name.includes(item) && !item.includes(name))
     .slice(0, 5);
 }
