@@ -194,6 +194,50 @@ async function searchWeb(query) {
   throw new Error("未配置搜索 API。请配置 SERPAPI_KEY 或 BING_SEARCH_API_KEY。");
 }
 
+function sourceChannel(item) {
+  const text = `${item.title || ""} ${item.url || ""} ${item.snippet || ""}`.toLowerCase();
+  if (/map|amap|高德|百度地图|地图|poi|place/.test(text)) return "地图/位置";
+  if (/dianping|大众点评|meituan|美团|koubei|口碑/.test(text)) return "点评/交易平台";
+  if (/xiaohongshu|小红书|douyin|抖音|bilibili|微博|weibo/.test(text)) return "内容平台";
+  if (/官网|official|brand|company|menu|菜单|产品|价格/.test(text)) return "品牌/产品";
+  return "通用搜索";
+}
+
+function buildMapLinks(name, city, district) {
+  const query = `${city}${district} ${name}`;
+  return [
+    { platform: "高德地图", url: `https://www.amap.com/search?query=${encodeURIComponent(query)}` },
+    { platform: "百度地图", url: `https://map.baidu.com/search/${encodeURIComponent(query)}` },
+    { platform: "腾讯地图", url: `https://map.qq.com/search/${encodeURIComponent(query)}` }
+  ];
+}
+
+function buildLocalEvidence(searchResults, name, city, district) {
+  const localWords = [name, city, district].filter(Boolean);
+  const candidates = searchResults.map(item => {
+    const haystack = `${item.title || ""} ${item.snippet || ""} ${item.url || ""}`;
+    const channel = sourceChannel(item);
+    let score = 0;
+    if (haystack.includes(name)) score += 35;
+    if (haystack.includes(city)) score += 25;
+    if (haystack.includes(district)) score += 30;
+    if (channel === "地图/位置") score += 25;
+    if (channel === "点评/交易平台") score += 18;
+    if (localWords.every(word => haystack.includes(word))) score += 20;
+    return { ...item, channel, score };
+  }).filter(item => item.score >= 35)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
+
+  const hasDistrictMatch = candidates.some(item => `${item.title} ${item.snippet}`.includes(district));
+  const hasCityMatch = candidates.some(item => `${item.title} ${item.snippet}`.includes(city));
+  return {
+    status: hasDistrictMatch ? "district_match" : hasCityMatch ? "city_match" : candidates.length ? "weak_match" : "not_verified",
+    confidence: hasDistrictMatch ? "high" : hasCityMatch ? "medium" : candidates.length ? "low" : "none",
+    candidates
+  };
+}
+
 async function callDoubao(prompt) {
   const apiKey = process.env.ARK_API_KEY;
   const configuredModel = process.env.ARK_MODEL || process.env.DOUBAO_MODEL;
@@ -262,18 +306,26 @@ async function liveDiagnose(input) {
   }
 
   const queries = [
-    `${name} ${city} ${district} 评分 评论`,
-    `${name} 品牌 行业 品类 核心卖点`,
-    `${city} ${district} ${seedCategory || name} 竞品 推荐`,
-    `${name} 用户评价 热门产品 门店`
+    { type: "地图门店", q: `${name} ${city} ${district} 门店 地址 地图` },
+    { type: "高德/百度地图", q: `${name} ${city} ${district} 高德地图 百度地图` },
+    { type: "点评口碑", q: `${name} ${city} ${district} 大众点评 美团 评分 评论` },
+    { type: "本地内容", q: `${name} ${city} ${district} 小红书 抖音 推荐` },
+    { type: "品牌产品", q: `${name} 品牌 官网 菜单 产品 价格 核心卖点` },
+    { type: "行业品类", q: `${name} 品牌 行业 品类 核心卖点` },
+    { type: "同区竞品", q: `${city} ${district} ${seedCategory || name} 同品类 竞品 门店 评分` },
+    { type: "用户评价", q: `${name} 用户评价 热门产品 门店` }
   ];
 
-  const searchGroups = await Promise.all(queries.map(q => searchWeb(q).catch(error => ([{
+  const searchGroups = await Promise.all(queries.map(({ type, q }) => searchWeb(q).then(results => (
+    results.map(item => ({ ...item, queryType: type, query: q }))
+  )).catch(error => ([{
     title: "搜索失败",
     url: "",
-    snippet: `${q}: ${error.message}`
+    snippet: `${q}: ${error.message}`,
+    queryType: type,
+    query: q
   }]))));
-  const searchResults = searchGroups.flat().filter(item => item.title !== "搜索失败").slice(0, 20);
+  const searchResults = searchGroups.flat().filter(item => item.title !== "搜索失败").slice(0, 36);
   if (!searchResults.length) {
     return {
       ok: false,
@@ -288,6 +340,13 @@ async function liveDiagnose(input) {
     .join("\n\n");
   const category = seedCategory || inferCategory(name, snippets);
   const competitors = fallbackCompetitors(category, name);
+  const mapLinks = buildMapLinks(name, city, district);
+  const localEvidence = buildLocalEvidence(searchResults, name, city, district);
+  const channelSummary = searchResults.reduce((acc, item) => {
+    const channel = sourceChannel(item);
+    acc[channel] = (acc[channel] || 0) + 1;
+    return acc;
+  }, {});
 
   const prompt = `请基于以下网络搜索资料，为商户生成GEO诊断素材。
 
@@ -296,6 +355,12 @@ async function liveDiagnose(input) {
 区域：${district}
 初步行业：${category}
 候选竞品：${competitors.join("、")}
+
+地图入口：
+${mapLinks.map(item => `${item.platform}：${item.url}`).join("\n")}
+
+本地展示候选：
+${localEvidence.candidates.map((item, index) => `[L${index + 1}] ${item.channel}｜${item.title}｜${item.snippet}｜${item.url}`).join("\n") || "未检索到明确本地候选"}
 
 网络资料：
 ${snippets}
@@ -308,12 +373,16 @@ ${snippets}
 5. 基础事实必须有资料依据；证据不足就写“证据不足”。
 6. 豆包AI测试回答请模拟真实提问后的精简总结，不要夸大。
 7. 评分控制在60分上下，除非证据非常强，不要给高分。
+8. 必须先判断该商户在“${city}${district}”是否有地图/门店/点评/本地内容展示；没有明确证据时，不要假装存在。
+9. 输出的 locationCandidates 必须是可核验的地区展示候选，优先包含地址、平台、证据来源。
 
 输出JSON，不要输出JSON之外的解释：
 {
   "category": "",
   "rating": "",
   "reviewCount": "",
+  "localPresence": {"status": "", "confidence": "", "summary": ""},
+  "locationCandidates": [],
   "sellingPoints": [],
   "competitors": [],
   "scenarios": [],
@@ -333,6 +402,22 @@ ${snippets}
     category: parsed.category || category,
     rating: parsed.rating || "",
     reviewCount: parsed.reviewCount || "",
+    localPresence: parsed.localPresence || {
+      status: localEvidence.status,
+      confidence: localEvidence.confidence,
+      summary: localEvidence.candidates.length
+        ? `检索到 ${localEvidence.candidates.length} 条与 ${city}${district} 相关的本地展示候选。`
+        : `暂未检索到 ${city}${district} 的明确地图/门店展示证据。`
+    },
+    locationCandidates: (parsed.locationCandidates?.length ? parsed.locationCandidates : localEvidence.candidates.map(item => ({
+      platform: item.channel,
+      title: item.title,
+      snippet: item.snippet,
+      url: item.url
+    }))).slice(0, 8),
+    mapLinks,
+    searchVerticals: channelSummary,
+    queryPlan: queries,
     sellingPoints: (parsed.sellingPoints || []).slice(0, 8),
     competitors: cleanCompetitors,
     scenarios: (parsed.scenarios || []).slice(0, 8),
