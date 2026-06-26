@@ -196,33 +196,45 @@ async function searchWeb(query) {
 
 async function callDoubao(prompt) {
   const apiKey = process.env.ARK_API_KEY;
-  const model = process.env.ARK_MODEL || process.env.DOUBAO_MODEL;
-  if (!apiKey || !model) {
+  const configuredModel = process.env.ARK_MODEL || process.env.DOUBAO_MODEL;
+  const fallbackModels = (process.env.ARK_FALLBACK_MODELS || "doubao-seed-2-0-lite-260428")
+    .split(",")
+    .map(item => item.trim())
+    .filter(Boolean);
+  const models = [...new Set([configuredModel, ...fallbackModels].filter(Boolean))];
+  if (!apiKey || !models.length) {
     throw new Error("未配置豆包 API。请配置 ARK_API_KEY 和 ARK_MODEL。");
   }
   const baseUrl = (process.env.ARK_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3").replace(/\/$/, "");
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "authorization": `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        {
-          role: "system",
-          content: "你是GEO商户诊断系统。只基于给定搜索资料和常识做审慎总结；不知道就说明证据不足。输出必须尽量结构化、可核验。"
-        },
-        { role: "user", content: prompt }
-      ],
-      temperature: 0.2
-    })
-  });
-  const raw = await response.text();
-  if (!response.ok) throw new Error(`豆包接口失败 HTTP ${response.status}: ${raw.slice(0, 300)}`);
-  const data = JSON.parse(raw);
-  return data.choices?.[0]?.message?.content || "";
+  let lastError = "";
+  for (const model of models) {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: "system",
+            content: "你是GEO商户诊断系统。只基于给定搜索资料和常识做审慎总结；不知道就说明证据不足。输出必须尽量结构化、可核验。"
+          },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.2
+      })
+    });
+    const raw = await response.text();
+    if (response.ok) {
+      const data = JSON.parse(raw);
+      return data.choices?.[0]?.message?.content || "";
+    }
+    lastError = `模型 ${model} 失败 HTTP ${response.status}: ${raw.slice(0, 300)}`;
+    if (!/ModelNotOpen|not activated|模型.*未开通/i.test(raw)) break;
+  }
+  throw new Error(`豆包接口失败：${lastError}`);
 }
 
 function extractJson(text) {
