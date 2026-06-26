@@ -239,16 +239,16 @@
       const reviewCount = 260 + (seed % 900);
       const isTea = /奶茶|茶饮/.test(category);
       const selling = isTea ? ["鲜果茶", "现制奶茶", "外卖便利", "年轻客群", "高性价比"] : ["位置便利", "服务稳定", "本地客群", "评价基础", "场景适配"];
-      const comps = isTea ? ["喜茶", "奈雪的茶", "霸王茶姬", "蜜雪冰城", "古茗"] : [`${district}热门商户A`, `${district}同品类商户B`, "商圈标杆商户C"];
+      const comps = isTea ? ["喜茶", "奈雪的茶", "霸王茶姬", "蜜雪冰城", "古茗"] : ["请通过联网诊断生成真实竞品"];
       const scenes = isTea ? ["下午茶", "逛街顺手买", "办公室团购", "学生党饮品", "外卖到家"] : ["附近推荐", "朋友聚会", "高性价比", "周末消费", "本地口碑"];
       return {
         category, rating, reviewCount,
         sellingPoints: selling.join("\n"),
         competitors: comps.join("\n"),
         scenarios: scenes.join("\n"),
-        facts: [`位置：${city}${district}核心商圈附近`, `品类：${category}`, `评论基础：约 ${reviewCount} 条`, "提示：当前为离线兜底结果，请以联网诊断结果为准。"].join("\n"),
-        sources: [`离线兜底证据｜${name}｜${city}${district}｜${category}`, "当前未获得实时联网证据，请重新点击联网探测获取正式结果。"].join("\n"),
-        aiAnswers: [`豆包｜${city}${district}${category}推荐？｜离线兜底回答：${name}有一定推荐潜力，但正式结论需要结合地图展示、评论摘要、热门产品和竞品对比。`].join("\n")
+        facts: [`位置：${city}${district}核心商圈附近`, `品类：${category}`, `评论基础：约 ${reviewCount} 条`, "提示：当前为预览结果，请点击联网探测获取正式诊断。"].join("\n"),
+        sources: [`预览证据｜${name}｜${city}${district}｜${category}`, "请重新点击联网探测获取地图、点评、品牌和本地内容证据。"].join("\n"),
+        aiAnswers: [`豆包｜${city}${district}${category}推荐？｜预览回答：${name}有一定推荐潜力，正式结论需要结合地图展示、评论摘要、热门产品和竞品对比。`].join("\n")
       };
     }
     async function hashText(text) {
@@ -282,6 +282,10 @@
     async function autoPopulateAndRun(force = false) {
       const live = await tryLiveDiagnose(force);
       if (live) return;
+      if (location.protocol !== "file:") {
+        $("probeStatus").textContent = "未获得联网诊断结果，请确认访问码后重新点击生成诊断。";
+        return;
+      }
       const profile = localProfile();
       if (!profile) {
         $("probeStatus").textContent = "请先输入名称并选择城市、区域。";
@@ -289,7 +293,7 @@
       }
       currentDataMode = "fallback";
       fillProfile(profile);
-      $("probeStatus").textContent = `当前显示离线兜底结果：评分 ${profile.rating}，评论数 ${profile.reviewCount}。请点击“联网探测”获取正式联网诊断。`;
+      $("probeStatus").textContent = `当前显示预览结果：评分 ${profile.rating}，评论数 ${profile.reviewCount}。请点击“联网探测”获取正式联网诊断。`;
       if (force) await runAudit();
     }
     function fillProfile(data) {
@@ -316,9 +320,9 @@
       const district = $("district").value.trim();
       if (!name || !city || !district || location.protocol === "file:") return false;
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 45000);
+      const timeout = setTimeout(() => controller.abort(), 180000);
       try {
-        $("probeStatus").textContent = "正在联网诊断：检索资料、识别行业与竞品、调用豆包...";
+        $("probeStatus").textContent = "正在联网诊断：地图门店、点评口碑、品牌产品、本地内容和竞品检索中，通常需要 30-120 秒...";
         const accessCode = $("accessCode").value.trim();
         const res = await fetch("/api/live-diagnose", {
           method: "POST",
@@ -339,8 +343,10 @@
         $("probeStatus").textContent = `已完成联网诊断：${data.sourceCount || 0} 条资料，${data.aiAnswerCount || 0} 条豆包回答（${cache}${remaining}）。`;
         if (force) await runAudit();
         return true;
-      } catch {
-        $("probeStatus").textContent = "联网诊断暂时失败，请稍后重试或检查访问码。";
+      } catch (error) {
+        $("probeStatus").textContent = error?.name === "AbortError"
+          ? "联网诊断超时，请稍后重试或缩小商户/区域范围。"
+          : "联网诊断暂时失败，请稍后重试或检查访问码。";
         return false;
       } finally {
         clearTimeout(timeout);
@@ -476,7 +482,7 @@
     function render(run) {
       $("summaryPanel").innerHTML = `
         <div class="panel-head"><h2 class="panel-title">诊断结果</h2><div class="actions"><button class="secondary" onclick="downloadJson()">JSON</button><button class="secondary" onclick="window.print()">PDF</button></div></div>
-        <div class="result-head"><div class="score-ring" style="--score:${run.score.total}"><div><strong>${run.score.total}</strong><span>${run.score.level}</span></div></div><div><h2>${escapeHtml(run.input.merchant.name)}</h2><p class="note">当前模式：${run.input.mode === "live" ? "真实联网诊断" : "离线兜底预览"}。预计可提升 ${Math.max(8, Math.round((100-run.score.total)*.35))}-${Math.min(55, Math.round((100-run.score.total)*.35)+14)}% 的AI搜索曝光机会。</p></div></div>
+        <div class="result-head"><div class="score-ring" style="--score:${run.score.total}"><div><strong>${run.score.total}</strong><span>${run.score.level}</span></div></div><div><h2>${escapeHtml(run.input.merchant.name)}</h2><p class="note">当前模式：${run.input.mode === "live" ? "真实联网诊断" : "预览模式"}。预计可提升 ${Math.max(8, Math.round((100-run.score.total)*.35))}-${Math.min(55, Math.round((100-run.score.total)*.35)+14)}% 的AI搜索曝光机会。</p></div></div>
         <div class="metrics">${Object.entries(run.score.modules).map(([k,v]) => `<div class="metric"><span>${moduleLabel(k)}</span><div class="bar" style="--value:${v}%"><i></i></div><strong>${v}</strong></div>`).join("")}</div>`;
       renderMapPanel(run.input);
       $("competitorPanel").innerHTML = `<div class="panel-head"><h2 class="panel-title">竞品对比</h2></div><table><thead><tr><th>名称</th><th>角色</th><th>AI提及次数</th><th>提及率</th></tr></thead><tbody>${run.competitors.map(c=>`<tr><td>${escapeHtml(c.name)}</td><td>${c.role}</td><td>${c.mentions}</td><td>${c.rate}%</td></tr>`).join("")}</tbody></table>`;
@@ -499,7 +505,7 @@
       for (const [k,v] of Object.entries(sample)) if (k !== "city" && k !== "district") $(k).value = v;
       await autoPopulateAndRun(true);
     });
-    $("runAudit").addEventListener("click", runAudit);
+    $("runAudit").addEventListener("click", () => autoPopulateAndRun(true));
     $("autoProbe").addEventListener("click", () => autoPopulateAndRun(true));
     $("locateMe").addEventListener("click", () => {
       if (!navigator.geolocation) {
