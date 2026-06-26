@@ -175,6 +175,7 @@
     let currentDataMode = "manual";
     let latestLiveExtras = {};
     let currentGeoPosition = null;
+    let lastLiveError = "";
 
     const areaData = {
       "上海": ["黄浦区", "徐汇区", "长宁区", "静安区", "普陀区", "浦东新区", "闵行区", "杨浦区"],
@@ -283,7 +284,7 @@
       const live = await tryLiveDiagnose(force);
       if (live) return;
       if (location.protocol !== "file:") {
-        $("probeStatus").textContent = "未获得联网诊断结果，请确认访问码后重新点击生成诊断。";
+        $("probeStatus").textContent = lastLiveError || "未获得联网诊断结果。请确认访问码、网络状态和后端配置后重新点击生成诊断。";
         return;
       }
       const profile = localProfile();
@@ -318,7 +319,12 @@
       const name = $("merchantName").value.trim();
       const city = $("city").value.trim();
       const district = $("district").value.trim();
-      if (!name || !city || !district || location.protocol === "file:") return false;
+      lastLiveError = "";
+      if (!name || !city || !district) {
+        lastLiveError = "请先输入商户名称，并选择城市和区域。";
+        return false;
+      }
+      if (location.protocol === "file:") return false;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 180000);
       try {
@@ -327,12 +333,13 @@
         const res = await fetch("/api/live-diagnose", {
           method: "POST",
           headers: { "content-type": "application/json", "x-access-code": accessCode },
-          body: JSON.stringify({ name, city, district, category: $("category").value.trim(), accessCode }),
+          body: JSON.stringify({ name, city, district, category: $("category").value.trim(), accessCode, forceRefresh: Boolean(force) }),
           signal: controller.signal
         });
         const data = await res.json();
         if (!res.ok || !data.ok) {
-          $("probeStatus").textContent = data?.message || "联网诊断暂不可用。";
+          lastLiveError = data?.message || `联网诊断失败（HTTP ${res.status}）。`;
+          $("probeStatus").textContent = lastLiveError;
           if (data?.code === "ACCESS_CODE_REQUIRED" || data?.code === "RATE_LIMITED") return true;
           return false;
         }
@@ -344,9 +351,10 @@
         if (force) await runAudit();
         return true;
       } catch (error) {
-        $("probeStatus").textContent = error?.name === "AbortError"
-          ? "联网诊断超时，请稍后重试或缩小商户/区域范围。"
-          : "联网诊断暂时失败，请稍后重试或检查访问码。";
+        lastLiveError = error?.name === "AbortError"
+          ? "联网诊断超时。当前会进行多通道搜索和豆包总结，建议稍后重试，或缩小商户/区域范围。"
+          : `联网诊断失败：${error?.message || "网络请求异常"}`;
+        $("probeStatus").textContent = lastLiveError;
         return false;
       } finally {
         clearTimeout(timeout);
