@@ -303,7 +303,8 @@
         locationCandidates: data.locationCandidates || [],
         mapLinks: data.mapLinks || [],
         searchVerticals: data.searchVerticals || {},
-        queryPlan: data.queryPlan || []
+        queryPlan: data.queryPlan || [],
+        aiMentionProbe: data.aiMentionProbe || null
       };
       $("category").value = data.category || "";
       $("rating").value = data.rating || "";
@@ -381,7 +382,8 @@
         rating: Number($("rating").value || 0),
         reviewCount: Number($("reviewCount").value || 0),
         sources: lines($("sources").value),
-        aiAnswersRaw: lines($("aiAnswers").value)
+        aiAnswersRaw: lines($("aiAnswers").value),
+        aiMentionProbe: latestLiveExtras.aiMentionProbe
       };
     }
     function parseAiAnswers(rows) {
@@ -395,27 +397,36 @@
       const merchant = input.merchant.name;
       const competitors = unique(input.competitors);
       const text = normalize([...aiAnswers.map(a => a.answer), ...input.sources, ...input.merchant.facts].join(" "));
-      const total = Math.max(1, aiAnswers.length);
-      const mentioned = aiAnswers.filter(a => normalize(a.answer).includes(normalize(merchant))).length;
+      const probe = input.aiMentionProbe && Number(input.aiMentionProbe.totalTests) > 0 ? input.aiMentionProbe : null;
+      const total = Math.max(1, probe?.totalTests || aiAnswers.length);
+      const mentioned = probe?.target?.mentions ?? aiAnswers.filter(a => normalize(a.answer).includes(normalize(merchant))).length;
       const compMentions = {};
-      competitors.forEach(c => compMentions[c] = aiAnswers.filter(a => normalize(a.answer).includes(normalize(c))).length);
+      competitors.forEach(c => {
+        const probeRow = probe?.competitors?.find(item => item.name === c);
+        compMentions[c] = probeRow?.mentions ?? aiAnswers.filter(a => normalize(a.answer).includes(normalize(c))).length;
+      });
+      const merchantRate = Math.round(mentioned / total * 100);
+      const compRates = Object.values(compMentions).map(count => Math.round(count / total * 100));
+      const avgCompRate = compRates.length ? Math.round(compRates.reduce((a,b)=>a+b,0) / compRates.length) : 0;
+      const topCompRate = compRates.length ? Math.max(...compRates) : 0;
       const signalCount = unique([merchant, input.merchant.city, input.merchant.district, input.merchant.category, ...input.scenarios, ...input.merchant.sellingPoints]).filter(s => text.includes(normalize(s))).length;
       const base = input.mode === "live" ? 58 : 52;
       const seed = seedFrom(merchant + input.merchant.city);
+      const compPressure = Math.max(0, topCompRate - merchantRate);
       const modules = {
-        aiVisibility: Math.min(72, base + Math.round(mentioned / total * 18) + seed % 5),
+        aiVisibility: Math.min(72, base + Math.round(merchantRate * .18) + seed % 5),
         infoAccuracy: Math.min(76, base + Math.min(16, input.sources.length * 3) + seed % 4),
         citability: Math.min(74, base + Math.min(18, signalCount * 2)),
         trustSignals: Math.min(72, base + (input.rating ? 5 : 0) + (input.reviewCount ? 5 : 0) + seed % 4),
-        competitorGap: Math.min(70, base + 8 - Math.round(Object.values(compMentions).reduce((a,b)=>a+b,0) / Math.max(1, competitors.length)))
+        competitorGap: Math.max(45, Math.min(70, base + 6 - Math.round(compPressure / 4) - Math.round(Math.max(0, avgCompRate - merchantRate) / 6)))
       };
       const totalScore = Math.round(modules.aiVisibility*.3 + modules.infoAccuracy*.2 + modules.citability*.2 + modules.trustSignals*.15 + modules.competitorGap*.15);
-      return { modules, total: totalScore, level: totalScore >= 70 ? "有竞争力" : totalScore >= 55 ? "可优化" : "低可见", competitorMentions: compMentions, diagnostics: { aiAnswers: aiAnswers.length, merchantMentionRate: Math.round(mentioned / total * 100) } };
+      return { modules, total: totalScore, level: totalScore >= 70 ? "有竞争力" : totalScore >= 55 ? "可优化" : "低可见", competitorMentions: compMentions, diagnostics: { aiAnswers: aiAnswers.length, mentionTests: total, merchantMentions: mentioned, merchantMentionRate: merchantRate, avgCompetitorMentionRate: avgCompRate, topCompetitorMentionRate: topCompRate, mentionMethod: probe?.method || "按AI测试回答文本统计自然提及次数" } };
     }
     function buildCompetitors(input, score) {
-      const total = Math.max(1, score.diagnostics.aiAnswers);
+      const total = Math.max(1, score.diagnostics.mentionTests || score.diagnostics.aiAnswers);
       return unique([input.merchant.name, ...input.competitors]).map(name => {
-        const mentions = name === input.merchant.name ? Math.round(score.diagnostics.merchantMentionRate / 100 * total) : score.competitorMentions[name] || 0;
+        const mentions = name === input.merchant.name ? score.diagnostics.merchantMentions : score.competitorMentions[name] || 0;
         return { name, role: name === input.merchant.name ? "目标商户" : "竞品", mentions, rate: Math.round(mentions / total * 100) };
       });
     }
@@ -452,6 +463,11 @@
       for (const source of input.sources) { const ev = await evidence("source_note", { source }); sourceEvs.push(ev); evidenceList.push(ev); }
       const aiEvs = [];
       for (const answer of aiAnswers) { const ev = await evidence("ai_answer", answer); aiEvs.push(ev); evidenceList.push(ev); }
+      if (input.aiMentionProbe) {
+        const ev = await evidence("ai_mention_probe", input.aiMentionProbe);
+        aiEvs.push(ev);
+        evidenceList.push(ev);
+      }
       const score = analyze(input, aiAnswers);
       const ids = { input:[inputEv.id], source:sourceEvs.map(e=>e.id), ai:aiEvs.map(e=>e.id) };
       latestRun = { createdAt:new Date().toISOString(), input, score, competitors:buildCompetitors(input, score), findings:buildFindings(input, score, ids), recommendations:buildRecommendations(score), evidence:evidenceList };
@@ -488,12 +504,18 @@
         ${candidateHtml}`;
     }
     function render(run) {
+      const mentionProbe = run.input.aiMentionProbe || null;
+      const mentionTests = mentionProbe?.tests || [];
+      const mentionMethod = run.score.diagnostics.mentionMethod || "按AI测试回答文本统计自然提及次数";
+      const mentionTestHtml = mentionTests.length
+        ? `<div class="finding"><div class="tag">豆包提及测试</div><p class="note">${escapeHtml(mentionMethod)}；样本数 ${run.score.diagnostics.mentionTests}。目标商户提及率 ${run.score.diagnostics.merchantMentionRate}% ，竞品平均提及率 ${run.score.diagnostics.avgCompetitorMentionRate}% ，最高竞品提及率 ${run.score.diagnostics.topCompetitorMentionRate}%。</p><table><thead><tr><th>测试问题</th><th>豆包回答摘要</th><th>命中品牌</th></tr></thead><tbody>${mentionTests.slice(0, 8).map(test=>`<tr><td>${escapeHtml(test.question)}</td><td>${escapeHtml(test.answer)}</td><td>${escapeHtml((test.matchedBrands || test.mentionedBrands || []).join("、") || "未命中")}</td></tr>`).join("")}</tbody></table></div>`
+        : `<p class="note">当前没有独立豆包提及测试，已按 AI 测试回答文本做兜底统计。</p>`;
       $("summaryPanel").innerHTML = `
         <div class="panel-head"><h2 class="panel-title">诊断结果</h2><div class="actions"><button class="secondary" onclick="downloadJson()">JSON</button><button class="secondary" onclick="window.print()">PDF</button></div></div>
         <div class="result-head"><div class="score-ring" style="--score:${run.score.total}"><div><strong>${run.score.total}</strong><span>${run.score.level}</span></div></div><div><h2>${escapeHtml(run.input.merchant.name)}</h2><p class="note">当前模式：${run.input.mode === "live" ? "真实联网诊断" : "预览模式"}。预计可提升 ${Math.max(8, Math.round((100-run.score.total)*.35))}-${Math.min(55, Math.round((100-run.score.total)*.35)+14)}% 的AI搜索曝光机会。</p></div></div>
         <div class="metrics">${Object.entries(run.score.modules).map(([k,v]) => `<div class="metric"><span>${moduleLabel(k)}</span><div class="bar" style="--value:${v}%"><i></i></div><strong>${v}</strong></div>`).join("")}</div>`;
       renderMapPanel(run.input);
-      $("competitorPanel").innerHTML = `<div class="panel-head"><h2 class="panel-title">竞品对比</h2></div><table><thead><tr><th>名称</th><th>角色</th><th>AI提及次数</th><th>提及率</th></tr></thead><tbody>${run.competitors.map(c=>`<tr><td>${escapeHtml(c.name)}</td><td>${c.role}</td><td>${c.mentions}</td><td>${c.rate}%</td></tr>`).join("")}</tbody></table>`;
+      $("competitorPanel").innerHTML = `<div class="panel-head"><h2 class="panel-title">竞品对比</h2></div><table><thead><tr><th>名称</th><th>角色</th><th>AI提及次数</th><th>提及率</th></tr></thead><tbody>${run.competitors.map(c=>`<tr><td>${escapeHtml(c.name)}</td><td>${c.role}</td><td>${c.mentions}</td><td>${c.rate}%</td></tr>`).join("")}</tbody></table>${mentionTestHtml}`;
       $("findingsPanel").innerHTML = `<div class="panel-head"><h2 class="panel-title">核心发现</h2></div>${run.findings.map(f=>`<section class="finding"><div class="tag">${f.severity}</div><h3>${escapeHtml(f.title)}</h3><p>${escapeHtml(f.detail)}</p><p class="evidence">证据：${escapeHtml(f.evidenceIds.join(", ") || "无")}</p></section>`).join("")}`;
       $("recommendPanel").innerHTML = `<div class="panel-head"><h2 class="panel-title">整改建议</h2></div><table><thead><tr><th>优先级</th><th>建议</th><th>操作</th><th>预计影响</th></tr></thead><tbody>${run.recommendations.map(r=>`<tr><td>${r[0]}</td><td>${escapeHtml(r[1])}</td><td>${escapeHtml(r[2])}</td><td>${escapeHtml(r[3])}</td></tr>`).join("")}</tbody></table>`;
       $("evidencePanel").innerHTML = `<div class="panel-head"><h2 class="panel-title">证据账本</h2></div><table><thead><tr><th>证据ID</th><th>类型</th><th>时间</th><th>哈希</th></tr></thead><tbody>${run.evidence.map(e=>`<tr><td><code>${e.id}</code></td><td>${e.type}</td><td>${e.timestamp}</td><td><code>${e.hash.slice(0,20)}</code></td></tr>`).join("")}</tbody></table>`;
