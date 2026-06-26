@@ -130,7 +130,11 @@
             <div class="status-card warn">缓存/限流<strong>检测中</strong></div>
           </div>
           <label>访问码<input id="accessCode" type="password" placeholder="公网部署后填写访问码；本地未启用可留空"></label>
-          <div class="note" id="probeStatus">输入名称并选择城市、区域后，优先联网检索并调用豆包；未启用时才降级本地模拟。</div>
+          <div class="note" id="probeStatus">输入名称并选择城市、区域后，优先进行地图门店、点评口碑、品牌产品、本地内容和竞品多通道检索。</div>
+          <div class="actions">
+            <button class="ghost" id="locateMe" type="button"><svg viewBox="0 0 24 24"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/><circle cx="12" cy="12" r="5"/></svg>定位</button>
+          </div>
+          <div class="note" id="geoStatus">定位可辅助核验当前设备位置，不会替代所选城市和区域。</div>
         </div>
 
         <div class="stack" style="margin-top:12px">
@@ -155,6 +159,7 @@
 
       <section class="work">
         <section class="panel" id="summaryPanel"><div class="empty">等待生成诊断</div></section>
+        <section class="panel" id="mapPanel"></section>
         <section class="panel" id="competitorPanel"></section>
         <section class="panel" id="findingsPanel"></section>
         <section class="panel" id="recommendPanel"></section>
@@ -168,6 +173,8 @@
     const fields = ["merchantName","city","district","category","sellingPoints","competitors","scenarios","rating","reviewCount","facts","sources","aiAnswers","accessCode"];
     let latestRun = null;
     let currentDataMode = "manual";
+    let latestLiveExtras = {};
+    let currentGeoPosition = null;
 
     const areaData = {
       "上海": ["黄浦区", "徐汇区", "长宁区", "静安区", "普陀区", "浦东新区", "闵行区", "杨浦区"],
@@ -286,6 +293,13 @@
       if (force) await runAudit();
     }
     function fillProfile(data) {
+      latestLiveExtras = {
+        localPresence: data.localPresence || null,
+        locationCandidates: data.locationCandidates || [],
+        mapLinks: data.mapLinks || [],
+        searchVerticals: data.searchVerticals || {},
+        queryPlan: data.queryPlan || []
+      };
       $("category").value = data.category || "";
       $("rating").value = data.rating || "";
       $("reviewCount").value = data.reviewCount || "";
@@ -341,6 +355,11 @@
           district: $("district").value.trim(),
           category: $("category").value.trim(),
           sellingPoints: lines($("sellingPoints").value),
+          localPresence: latestLiveExtras.localPresence,
+          locationCandidates: latestLiveExtras.locationCandidates || [],
+          mapLinks: latestLiveExtras.mapLinks || [],
+          searchVerticals: latestLiveExtras.searchVerticals || {},
+          geoPosition: currentGeoPosition,
           facts: lines($("facts").value)
         },
         competitors: lines($("competitors").value),
@@ -424,11 +443,42 @@
       latestRun = { createdAt:new Date().toISOString(), input, score, competitors:buildCompetitors(input, score), findings:buildFindings(input, score, ids), recommendations:buildRecommendations(score), evidence:evidenceList };
       render(latestRun);
     }
+    function localPresenceText(localPresence) {
+      if (!localPresence) return "未核验";
+      const labels = { district_match:"区域匹配", city_match:"城市匹配", weak_match:"弱匹配", not_verified:"未验证" };
+      const confidence = { high:"高", medium:"中", low:"低", none:"无" };
+      return `${labels[localPresence.status] || localPresence.status || "未核验"} / 置信度 ${confidence[localPresence.confidence] || localPresence.confidence || "-"}`;
+    }
+    function renderMapPanel(input) {
+      const links = input.merchant.mapLinks || [];
+      const candidates = input.merchant.locationCandidates || [];
+      const verticals = input.merchant.searchVerticals || {};
+      const linkHtml = links.length
+        ? links.map(item => `<a class="tag" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.platform)}</a>`).join(" ")
+        : '<span class="note">暂无地图入口</span>';
+      const candidateHtml = candidates.length
+        ? `<table><thead><tr><th>平台</th><th>地区展示候选</th><th>证据</th></tr></thead><tbody>${candidates.map(item => {
+            const title = typeof item === "string" ? item : (item.title || item.name || item.platform || "");
+            const platform = typeof item === "string" ? "候选" : (item.platform || item.channel || "候选");
+            const snippet = typeof item === "string" ? item : (item.snippet || item.address || item.summary || item.url || "");
+            const url = typeof item === "object" && item.url ? `<br><a class="evidence" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.url)}</a>` : "";
+            return `<tr><td>${escapeHtml(platform)}</td><td>${escapeHtml(title)}</td><td>${escapeHtml(snippet)}${url}</td></tr>`;
+          }).join("")}</tbody></table>`
+        : '<div class="empty">未检索到明确的本地展示候选</div>';
+      const verticalHtml = Object.entries(verticals).map(([k,v]) => `<span class="tag">${escapeHtml(k)} ${v}</span>`).join(" ");
+      $("mapPanel").innerHTML = `<div class="panel-head"><h2 class="panel-title">地区展示与地图核验</h2></div>
+        <p class="note">核验结果：${escapeHtml(localPresenceText(input.merchant.localPresence))}</p>
+        <p class="note">${escapeHtml(input.merchant.localPresence?.summary || "系统会优先查找地图、门店地址、点评平台和本地内容平台证据。")}</p>
+        <div class="finding"><div class="tag">地图入口</div><p>${linkHtml}</p></div>
+        <div class="finding"><div class="tag">搜索通道</div><p>${verticalHtml || "暂无通道统计"}</p></div>
+        ${candidateHtml}`;
+    }
     function render(run) {
       $("summaryPanel").innerHTML = `
         <div class="panel-head"><h2 class="panel-title">诊断结果</h2><div class="actions"><button class="secondary" onclick="downloadJson()">JSON</button><button class="secondary" onclick="window.print()">PDF</button></div></div>
         <div class="result-head"><div class="score-ring" style="--score:${run.score.total}"><div><strong>${run.score.total}</strong><span>${run.score.level}</span></div></div><div><h2>${escapeHtml(run.input.merchant.name)}</h2><p class="note">当前模式：${run.input.mode === "live" ? "真实联网诊断" : "本地模拟"}。预计可提升 ${Math.max(8, Math.round((100-run.score.total)*.35))}-${Math.min(55, Math.round((100-run.score.total)*.35)+14)}% 的AI搜索曝光机会。</p></div></div>
         <div class="metrics">${Object.entries(run.score.modules).map(([k,v]) => `<div class="metric"><span>${moduleLabel(k)}</span><div class="bar" style="--value:${v}%"><i></i></div><strong>${v}</strong></div>`).join("")}</div>`;
+      renderMapPanel(run.input);
       $("competitorPanel").innerHTML = `<div class="panel-head"><h2 class="panel-title">竞品对比</h2></div><table><thead><tr><th>名称</th><th>角色</th><th>AI提及次数</th><th>提及率</th></tr></thead><tbody>${run.competitors.map(c=>`<tr><td>${escapeHtml(c.name)}</td><td>${c.role}</td><td>${c.mentions}</td><td>${c.rate}%</td></tr>`).join("")}</tbody></table>`;
       $("findingsPanel").innerHTML = `<div class="panel-head"><h2 class="panel-title">核心发现</h2></div>${run.findings.map(f=>`<section class="finding"><div class="tag">${f.severity}</div><h3>${escapeHtml(f.title)}</h3><p>${escapeHtml(f.detail)}</p><p class="evidence">证据：${escapeHtml(f.evidenceIds.join(", ") || "无")}</p></section>`).join("")}`;
       $("recommendPanel").innerHTML = `<div class="panel-head"><h2 class="panel-title">整改建议</h2></div><table><thead><tr><th>优先级</th><th>建议</th><th>操作</th><th>预计影响</th></tr></thead><tbody>${run.recommendations.map(r=>`<tr><td>${r[0]}</td><td>${escapeHtml(r[1])}</td><td>${escapeHtml(r[2])}</td><td>${escapeHtml(r[3])}</td></tr>`).join("")}</tbody></table>`;
@@ -451,13 +501,33 @@
     });
     $("runAudit").addEventListener("click", runAudit);
     $("autoProbe").addEventListener("click", () => autoPopulateAndRun(true));
+    $("locateMe").addEventListener("click", () => {
+      if (!navigator.geolocation) {
+        $("geoStatus").textContent = "当前浏览器不支持定位。";
+        return;
+      }
+      $("geoStatus").textContent = "正在请求设备定位...";
+      navigator.geolocation.getCurrentPosition(position => {
+        currentGeoPosition = {
+          latitude: Number(position.coords.latitude.toFixed(6)),
+          longitude: Number(position.coords.longitude.toFixed(6)),
+          accuracy: Math.round(position.coords.accuracy || 0)
+        };
+        $("geoStatus").textContent = `已定位：${currentGeoPosition.latitude}, ${currentGeoPosition.longitude}，精度约 ${currentGeoPosition.accuracy} 米。`;
+      }, error => {
+        $("geoStatus").textContent = `定位未授权或失败：${error.message}`;
+      }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+    });
     $("city").addEventListener("change", () => fillDistrictOptions($("city").value));
     $("clearAll").addEventListener("click", () => {
       fields.forEach(id => $(id).value = "");
       fillDistrictOptions("");
       latestRun = null;
-      $("probeStatus").textContent = "输入名称并选择城市、区域后，优先联网检索并调用豆包；未启用时才降级本地模拟。";
-      ["summaryPanel","competitorPanel","findingsPanel","recommendPanel","evidencePanel"].forEach(id => $(id).innerHTML = id === "summaryPanel" ? '<div class="empty">等待生成诊断</div>' : "");
+      latestLiveExtras = {};
+      currentGeoPosition = null;
+      $("geoStatus").textContent = "定位可辅助核验当前设备位置，不会替代所选城市和区域。";
+      $("probeStatus").textContent = "输入名称并选择城市、区域后，优先进行地图门店、点评口碑、品牌产品、本地内容和竞品多通道检索。";
+      ["summaryPanel","mapPanel","competitorPanel","findingsPanel","recommendPanel","evidencePanel"].forEach(id => $(id).innerHTML = id === "summaryPanel" ? '<div class="empty">等待生成诊断</div>' : "");
     });
     fillCityOptions();
     loadRuntimeStatus();
