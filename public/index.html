@@ -246,9 +246,9 @@
         sellingPoints: selling.join("\n"),
         competitors: comps.join("\n"),
         scenarios: scenes.join("\n"),
-        facts: [`位置：${city}${district}核心商圈附近`, `品类：${category}`, `评论基础：约 ${reviewCount} 条`, "提示：当前为本地模拟，真实结果请启动 live 后端"].join("\n"),
-        sources: [`本地模拟证据｜${name}｜${city}${district}｜${category}`, "未调用真实搜索 API，正式交付需使用 live backend"].join("\n"),
-        aiAnswers: [`豆包｜${city}${district}${category}推荐？｜本地模拟回答：${name}有一定推荐潜力，但需要补充真实网络证据、评论摘要、热门产品和竞品对比。`].join("\n")
+        facts: [`位置：${city}${district}核心商圈附近`, `品类：${category}`, `评论基础：约 ${reviewCount} 条`, "提示：当前为离线兜底结果，请以联网诊断结果为准。"].join("\n"),
+        sources: [`离线兜底证据｜${name}｜${city}${district}｜${category}`, "当前未获得实时联网证据，请重新点击联网探测获取正式结果。"].join("\n"),
+        aiAnswers: [`豆包｜${city}${district}${category}推荐？｜离线兜底回答：${name}有一定推荐潜力，但正式结论需要结合地图展示、评论摘要、热门产品和竞品对比。`].join("\n")
       };
     }
     async function hashText(text) {
@@ -287,9 +287,9 @@
         $("probeStatus").textContent = "请先输入名称并选择城市、区域。";
         return;
       }
-      currentDataMode = "local";
+      currentDataMode = "fallback";
       fillProfile(profile);
-      $("probeStatus").textContent = `已切换本地模拟：评分 ${profile.rating}，评论数 ${profile.reviewCount}。真实商用请启动 live 后端。`;
+      $("probeStatus").textContent = `当前显示离线兜底结果：评分 ${profile.rating}，评论数 ${profile.reviewCount}。请点击“联网探测”获取正式联网诊断。`;
       if (force) await runAudit();
     }
     function fillProfile(data) {
@@ -340,7 +340,7 @@
         if (force) await runAudit();
         return true;
       } catch {
-        $("probeStatus").textContent = "联网诊断失败，已准备切换本地模拟。";
+        $("probeStatus").textContent = "联网诊断暂时失败，请稍后重试或检查访问码。";
         return false;
       } finally {
         clearTimeout(timeout);
@@ -476,7 +476,7 @@
     function render(run) {
       $("summaryPanel").innerHTML = `
         <div class="panel-head"><h2 class="panel-title">诊断结果</h2><div class="actions"><button class="secondary" onclick="downloadJson()">JSON</button><button class="secondary" onclick="window.print()">PDF</button></div></div>
-        <div class="result-head"><div class="score-ring" style="--score:${run.score.total}"><div><strong>${run.score.total}</strong><span>${run.score.level}</span></div></div><div><h2>${escapeHtml(run.input.merchant.name)}</h2><p class="note">当前模式：${run.input.mode === "live" ? "真实联网诊断" : "本地模拟"}。预计可提升 ${Math.max(8, Math.round((100-run.score.total)*.35))}-${Math.min(55, Math.round((100-run.score.total)*.35)+14)}% 的AI搜索曝光机会。</p></div></div>
+        <div class="result-head"><div class="score-ring" style="--score:${run.score.total}"><div><strong>${run.score.total}</strong><span>${run.score.level}</span></div></div><div><h2>${escapeHtml(run.input.merchant.name)}</h2><p class="note">当前模式：${run.input.mode === "live" ? "真实联网诊断" : "离线兜底预览"}。预计可提升 ${Math.max(8, Math.round((100-run.score.total)*.35))}-${Math.min(55, Math.round((100-run.score.total)*.35)+14)}% 的AI搜索曝光机会。</p></div></div>
         <div class="metrics">${Object.entries(run.score.modules).map(([k,v]) => `<div class="metric"><span>${moduleLabel(k)}</span><div class="bar" style="--value:${v}%"><i></i></div><strong>${v}</strong></div>`).join("")}</div>`;
       renderMapPanel(run.input);
       $("competitorPanel").innerHTML = `<div class="panel-head"><h2 class="panel-title">竞品对比</h2></div><table><thead><tr><th>名称</th><th>角色</th><th>AI提及次数</th><th>提及率</th></tr></thead><tbody>${run.competitors.map(c=>`<tr><td>${escapeHtml(c.name)}</td><td>${c.role}</td><td>${c.mentions}</td><td>${c.rate}%</td></tr>`).join("")}</tbody></table>`;
