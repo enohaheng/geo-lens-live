@@ -292,6 +292,109 @@ function extractJson(text) {
   }
 }
 
+function uniqueList(values) {
+  return [...new Set((values || []).map(item => String(item || "").trim()).filter(Boolean))];
+}
+
+function countBrandMention(text, brand) {
+  const haystack = String(text || "").toLowerCase();
+  const needle = String(brand || "").toLowerCase().trim();
+  if (!needle) return 0;
+  return haystack.includes(needle) ? 1 : 0;
+}
+
+function normalizeMentionTests(parsed, fallbackQuestions) {
+  const rows = Array.isArray(parsed?.tests) ? parsed.tests : [];
+  const tests = rows.map((item, index) => ({
+    question: String(item.question || fallbackQuestions[index] || `AI提及测试${index + 1}`).trim(),
+    answer: String(item.answer || "").replace(/\s+/g, " ").trim(),
+    mentionedBrands: uniqueList(item.mentionedBrands || item.mentions || [])
+  })).filter(item => item.question && item.answer);
+  return tests.length ? tests : fallbackQuestions.map(question => ({
+    question,
+    answer: "证据不足：本轮豆包测试没有返回可统计回答。",
+    mentionedBrands: []
+  }));
+}
+
+async function buildAiMentionProbe({ name, city, district, category, competitors, snippets }) {
+  const brands = uniqueList([name, ...competitors]).slice(0, 8);
+  const fallbackQuestions = [
+    `${city}${district}${category}推荐哪些品牌？`,
+    `${city}${district}附近有什么适合顺手买的${category}？`,
+    `${city}${district}${category}外卖怎么选？`,
+    `${city}${district}年轻人常买的${category}有哪些？`,
+    `${city}${district}${category}性价比推荐？`,
+    `${city}${district}逛街时买${category}推荐什么？`,
+    `${city}${district}${category}聚会团购推荐？`,
+    `${city}${district}${category}口碑比较好的商户有哪些？`
+  ];
+  const prompt = `你要做一次“豆包AI自然提及率”测试。请模拟普通用户向豆包提问时的回答，不要为了照顾待评估品牌而强行提及它。
+
+待评估品牌/商户：${name}
+城市：${city}
+区域：${district}
+品类：${category}
+候选竞品：${competitors.join("、")}
+
+可参考的网络资料摘要：
+${snippets.slice(0, 5000)}
+
+测试规则：
+1. 生成 8 个本地消费场景问题，问题里不要出现“${name}”这个名字。
+2. 每个问题给出一段精简的豆包式回答，回答里只自然推荐你认为更可能被豆包提到的品牌/商户。
+3. 如果待评估品牌缺少足够证据，可以不提及；不要为了让它好看而补充。
+4. 头部竞品或本地强势竞品如果更容易被 AI 推荐，应当正常出现。
+5. 输出 JSON，不要输出 JSON 之外的解释。
+
+JSON格式：
+{
+  "method": "8个不含目标商户名称的本地消费场景问题，统计豆包回答中自然出现的品牌/商户次数",
+  "tests": [
+    {"question": "", "answer": "", "mentionedBrands": []}
+  ]
+}`;
+  try {
+    const answer = await callDoubao(prompt);
+    const parsed = extractJson(answer) || {};
+    const tests = normalizeMentionTests(parsed, fallbackQuestions);
+    const totalTests = Math.max(1, tests.length);
+    const countFor = brand => tests.reduce((sum, test) => {
+      const inList = test.mentionedBrands.some(item => item.includes(brand) || brand.includes(item));
+      return sum + ((inList || countBrandMention(test.answer, brand)) ? 1 : 0);
+    }, 0);
+    const targetMentions = countFor(name);
+    const competitorRows = competitors.slice(0, 6).map(brand => {
+      const mentions = countFor(brand);
+      return { name: brand, mentions, mentionRate: Math.round(mentions / totalTests * 100) };
+    }).sort((a, b) => b.mentions - a.mentions);
+    return {
+      provider: "豆包",
+      method: parsed.method || "8个不含目标商户名称的本地消费场景问题，统计豆包回答中自然出现的品牌/商户次数",
+      totalTests,
+      target: { name, mentions: targetMentions, mentionRate: Math.round(targetMentions / totalTests * 100) },
+      competitors: competitorRows,
+      tests: tests.map(test => ({
+        ...test,
+        matchedBrands: brands.filter(brand => (
+          test.mentionedBrands.some(item => item.includes(brand) || brand.includes(item)) ||
+          countBrandMention(test.answer, brand)
+        ))
+      }))
+    };
+  } catch (error) {
+    return {
+      provider: "豆包",
+      method: "豆包AI自然提及率测试",
+      totalTests: 0,
+      target: { name, mentions: 0, mentionRate: 0 },
+      competitors: competitors.slice(0, 6).map(brand => ({ name: brand, mentions: 0, mentionRate: 0 })),
+      tests: [],
+      error: error.message
+    };
+  }
+}
+
 async function liveDiagnose(input) {
   const name = normalize(input.name);
   const city = normalize(input.city);
@@ -402,9 +505,20 @@ ${snippets}
   const fallbackAiAnswer = Object.keys(parsed).length
     ? `豆包AI测试回答：在“${city}${district}${parsed.category || category}推荐”场景下，${name}目前更适合作为有一定本地展示基础的候选商户；主要竞争对象包括${cleanCompetitors.join("、") || "同品类商户"}。结论仍需结合地图门店、点评口碑和本地内容证据复核。`
     : `豆包AI测试回答：${String(answer || "").replace(/\s+/g, " ").trim().slice(0, 320)}`;
-  const aiAnswers = (parsedAiAnswers.length ? parsedAiAnswers : [fallbackAiAnswer])
+  const aiMentionProbe = await buildAiMentionProbe({
+    name,
+    city,
+    district,
+    category: parsed.category || category,
+    competitors: cleanCompetitors,
+    snippets
+  });
+  const mentionAnswerRows = (aiMentionProbe.tests || []).map(test => (
+    `豆包｜${test.question}｜${test.answer}`
+  ));
+  const aiAnswers = [...(parsedAiAnswers.length ? parsedAiAnswers : [fallbackAiAnswer]), ...mentionAnswerRows]
     .filter(Boolean)
-    .slice(0, 6);
+    .slice(0, 10);
 
   const data = {
     ok: true,
@@ -433,6 +547,7 @@ ${snippets}
     facts: (parsed.facts || []).slice(0, 10),
     sources: (parsed.sources?.length ? parsed.sources : searchResults.map(item => `${item.title}｜${item.snippet}｜${item.url}`)).slice(0, 8),
     aiAnswers,
+    aiMentionProbe,
     sourceCount: searchResults.length,
     aiAnswerCount: aiAnswers.length,
     cacheHit: false
