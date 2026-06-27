@@ -302,7 +302,7 @@ async function callDoubao(prompt, options = {}) {
   if (!providers.length) {
     throw new Error("未配置大模型 API。请配置 AI_API_KEY/AI_BASE_URL/AI_MODEL，或配置 DEEPSEEK_API_KEY、DASHSCOPE_API_KEY、MOONSHOT_API_KEY、ARK_API_KEY。");
   }
-  let lastError = "";
+  const modelErrors = [];
   for (const provider of providers) for (const model of provider.models) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -331,9 +331,10 @@ async function callDoubao(prompt, options = {}) {
       });
       raw = await response.text();
     } catch (error) {
-      lastError = error.name === "AbortError"
+      const message = error.name === "AbortError"
         ? `${provider.name} 模型 ${model} 超时 ${timeoutMs}ms`
         : `${provider.name} 模型 ${model} 请求失败: ${error.message}`;
+      modelErrors.push(message);
       break;
     } finally {
       clearTimeout(timer);
@@ -342,10 +343,10 @@ async function callDoubao(prompt, options = {}) {
       const data = JSON.parse(raw);
       return data.choices?.[0]?.message?.content || "";
     }
-    lastError = `${provider.name} 模型 ${model} 失败 HTTP ${response.status}: ${raw.slice(0, 300)}`;
+    modelErrors.push(`${provider.name} 模型 ${model} 失败 HTTP ${response.status}: ${raw.slice(0, 220)}`);
     if (!/ModelNotOpen|not activated|模型.*未开通/i.test(raw)) break;
   }
-  throw new Error(`大模型接口失败：${lastError}`);
+  throw new Error(`大模型接口失败：${modelErrors.join("；") || "未知错误"}`);
 }
 
 function extractJson(text) {
