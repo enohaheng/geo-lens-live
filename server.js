@@ -255,6 +255,14 @@ function getAiProviders() {
       models: [...new Set([process.env.AI_MODEL, ...splitModels(process.env.AI_FALLBACK_MODELS)])]
     });
   }
+  if (process.env.ARK_API_KEY && (process.env.ARK_MODEL || process.env.DOUBAO_MODEL)) {
+    providers.push({
+      name: "豆包/火山Ark",
+      apiKey: process.env.ARK_API_KEY,
+      baseUrl: process.env.ARK_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3",
+      models: [...new Set([process.env.ARK_MODEL || process.env.DOUBAO_MODEL, ...splitModels(process.env.ARK_FALLBACK_MODELS || "doubao-seed-2-0-lite-260428")])]
+    });
+  }
   if (process.env.DEEPSEEK_API_KEY) {
     providers.push({
       name: "DeepSeek",
@@ -277,14 +285,6 @@ function getAiProviders() {
       apiKey: process.env.MOONSHOT_API_KEY,
       baseUrl: process.env.MOONSHOT_BASE_URL || "https://api.moonshot.cn/v1",
       models: [...new Set([process.env.MOONSHOT_MODEL || "kimi-k2-0711-preview", ...splitModels(process.env.MOONSHOT_FALLBACK_MODELS)])]
-    });
-  }
-  if (process.env.ARK_API_KEY && (process.env.ARK_MODEL || process.env.DOUBAO_MODEL)) {
-    providers.push({
-      name: "豆包/火山Ark",
-      apiKey: process.env.ARK_API_KEY,
-      baseUrl: process.env.ARK_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3",
-      models: [...new Set([process.env.ARK_MODEL || process.env.DOUBAO_MODEL, ...splitModels(process.env.ARK_FALLBACK_MODELS || "doubao-seed-2-0-lite-260428")])]
     });
   }
   return providers.map(provider => ({
