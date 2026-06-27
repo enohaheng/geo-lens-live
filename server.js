@@ -259,8 +259,8 @@ function getAiProviders() {
     providers.push({
       name: "DeepSeek",
       apiKey: process.env.DEEPSEEK_API_KEY,
-      baseUrl: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/v1",
-      models: [...new Set([process.env.DEEPSEEK_MODEL || "deepseek-chat", ...splitModels(process.env.DEEPSEEK_FALLBACK_MODELS)])]
+      baseUrl: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
+      models: [...new Set([process.env.DEEPSEEK_MODEL || "deepseek-v4-flash", ...splitModels(process.env.DEEPSEEK_FALLBACK_MODELS)])]
     });
   }
   if (process.env.DASHSCOPE_API_KEY) {
