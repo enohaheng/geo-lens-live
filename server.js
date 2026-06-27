@@ -238,47 +238,114 @@ function buildLocalEvidence(searchResults, name, city, district) {
   };
 }
 
-async function callDoubao(prompt) {
-  const apiKey = process.env.ARK_API_KEY;
-  const configuredModel = process.env.ARK_MODEL || process.env.DOUBAO_MODEL;
-  const fallbackModels = (process.env.ARK_FALLBACK_MODELS || "doubao-seed-2-0-lite-260428")
+function splitModels(value) {
+  return String(value || "")
     .split(",")
     .map(item => item.trim())
     .filter(Boolean);
-  const models = [...new Set([configuredModel, ...fallbackModels].filter(Boolean))];
-  if (!apiKey || !models.length) {
-    throw new Error("未配置豆包 API。请配置 ARK_API_KEY 和 ARK_MODEL。");
-  }
-  const baseUrl = (process.env.ARK_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3").replace(/\/$/, "");
-  let lastError = "";
-  for (const model of models) {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "authorization": `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          {
-            role: "system",
-            content: "你是GEO商户诊断系统。只基于给定搜索资料和常识做审慎总结；不知道就说明证据不足。输出必须尽量结构化、可核验。"
-          },
-          { role: "user", content: prompt }
-        ],
-        temperature: 0.2
-      })
+}
+
+function getAiProviders() {
+  const providers = [];
+  if (process.env.AI_API_KEY && process.env.AI_BASE_URL && process.env.AI_MODEL) {
+    providers.push({
+      name: process.env.AI_PROVIDER_NAME || "通用大模型",
+      apiKey: process.env.AI_API_KEY,
+      baseUrl: process.env.AI_BASE_URL,
+      models: [...new Set([process.env.AI_MODEL, ...splitModels(process.env.AI_FALLBACK_MODELS)])]
     });
-    const raw = await response.text();
+  }
+  if (process.env.DEEPSEEK_API_KEY) {
+    providers.push({
+      name: "DeepSeek",
+      apiKey: process.env.DEEPSEEK_API_KEY,
+      baseUrl: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/v1",
+      models: [...new Set([process.env.DEEPSEEK_MODEL || "deepseek-chat", ...splitModels(process.env.DEEPSEEK_FALLBACK_MODELS)])]
+    });
+  }
+  if (process.env.DASHSCOPE_API_KEY) {
+    providers.push({
+      name: "通义千问",
+      apiKey: process.env.DASHSCOPE_API_KEY,
+      baseUrl: process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      models: [...new Set([process.env.QWEN_MODEL || "qwen-turbo-latest", ...splitModels(process.env.QWEN_FALLBACK_MODELS)])]
+    });
+  }
+  if (process.env.MOONSHOT_API_KEY) {
+    providers.push({
+      name: "Kimi",
+      apiKey: process.env.MOONSHOT_API_KEY,
+      baseUrl: process.env.MOONSHOT_BASE_URL || "https://api.moonshot.cn/v1",
+      models: [...new Set([process.env.MOONSHOT_MODEL || "kimi-k2-0711-preview", ...splitModels(process.env.MOONSHOT_FALLBACK_MODELS)])]
+    });
+  }
+  if (process.env.ARK_API_KEY && (process.env.ARK_MODEL || process.env.DOUBAO_MODEL)) {
+    providers.push({
+      name: "豆包/火山Ark",
+      apiKey: process.env.ARK_API_KEY,
+      baseUrl: process.env.ARK_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3",
+      models: [...new Set([process.env.ARK_MODEL || process.env.DOUBAO_MODEL, ...splitModels(process.env.ARK_FALLBACK_MODELS || "doubao-seed-2-0-lite-260428")])]
+    });
+  }
+  return providers.map(provider => ({
+    ...provider,
+    baseUrl: String(provider.baseUrl || "").replace(/\/$/, ""),
+    models: provider.models.filter(Boolean)
+  })).filter(provider => provider.apiKey && provider.baseUrl && provider.models.length);
+}
+
+async function callDoubao(prompt, options = {}) {
+  const maxTokens = options.maxTokens || 1600;
+  const temperature = options.temperature ?? 0.2;
+  const timeoutMs = options.timeoutMs || 65000;
+  const providers = getAiProviders();
+  if (!providers.length) {
+    throw new Error("未配置大模型 API。请配置 AI_API_KEY/AI_BASE_URL/AI_MODEL，或配置 DEEPSEEK_API_KEY、DASHSCOPE_API_KEY、MOONSHOT_API_KEY、ARK_API_KEY。");
+  }
+  let lastError = "";
+  for (const provider of providers) for (const model of provider.models) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let response;
+    let raw = "";
+    try {
+      response = await fetch(`${provider.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "authorization": `Bearer ${provider.apiKey}`
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: "system",
+              content: "你是GEO商户诊断系统。只基于给定搜索资料和常识做审慎总结；不知道就说明证据不足。输出必须尽量结构化、可核验。"
+            },
+            { role: "user", content: prompt }
+          ],
+          temperature,
+          max_tokens: maxTokens
+        }),
+        signal: controller.signal
+      });
+      raw = await response.text();
+    } catch (error) {
+      lastError = error.name === "AbortError"
+        ? `${provider.name} 模型 ${model} 超时 ${timeoutMs}ms`
+        : `${provider.name} 模型 ${model} 请求失败: ${error.message}`;
+      break;
+    } finally {
+      clearTimeout(timer);
+    }
     if (response.ok) {
       const data = JSON.parse(raw);
       return data.choices?.[0]?.message?.content || "";
     }
-    lastError = `模型 ${model} 失败 HTTP ${response.status}: ${raw.slice(0, 300)}`;
+    lastError = `${provider.name} 模型 ${model} 失败 HTTP ${response.status}: ${raw.slice(0, 300)}`;
     if (!/ModelNotOpen|not activated|模型.*未开通/i.test(raw)) break;
   }
-  throw new Error(`豆包接口失败：${lastError}`);
+  throw new Error(`大模型接口失败：${lastError}`);
 }
 
 function extractJson(text) {
@@ -317,8 +384,36 @@ function normalizeMentionTests(parsed, fallbackQuestions) {
   }));
 }
 
-async function buildAiMentionProbe({ name, city, district, category, competitors, snippets }) {
+function scoreMentionProbe(parsed, fallbackQuestions, name, competitors) {
   const brands = uniqueList([name, ...competitors]).slice(0, 8);
+  const tests = normalizeMentionTests(parsed, fallbackQuestions);
+  const totalTests = Math.max(1, tests.length);
+  const countFor = brand => tests.reduce((sum, test) => {
+    const inList = test.mentionedBrands.some(item => item.includes(brand) || brand.includes(item));
+    return sum + ((inList || countBrandMention(test.answer, brand)) ? 1 : 0);
+  }, 0);
+  const targetMentions = countFor(name);
+  const competitorRows = competitors.slice(0, 6).map(brand => {
+    const mentions = countFor(brand);
+    return { name: brand, mentions, mentionRate: Math.round(mentions / totalTests * 100) };
+  }).sort((a, b) => b.mentions - a.mentions);
+  return {
+    provider: "豆包",
+    method: parsed?.method || "8个不含目标商户名称的本地消费场景问题，统计豆包回答中自然出现的品牌/商户次数",
+    totalTests,
+    target: { name, mentions: targetMentions, mentionRate: Math.round(targetMentions / totalTests * 100) },
+    competitors: competitorRows,
+    tests: tests.map(test => ({
+      ...test,
+      matchedBrands: brands.filter(brand => (
+        test.mentionedBrands.some(item => item.includes(brand) || brand.includes(item)) ||
+        countBrandMention(test.answer, brand)
+      ))
+    }))
+  };
+}
+
+async function buildAiMentionProbe({ name, city, district, category, competitors, snippets }) {
   const fallbackQuestions = [
     `${city}${district}${category}推荐哪些品牌？`,
     `${city}${district}附近有什么适合顺手买的${category}？`,
@@ -355,33 +450,9 @@ JSON格式：
   ]
 }`;
   try {
-    const answer = await callDoubao(prompt);
+    const answer = await callDoubao(prompt, { maxTokens: 2200, timeoutMs: 65000 });
     const parsed = extractJson(answer) || {};
-    const tests = normalizeMentionTests(parsed, fallbackQuestions);
-    const totalTests = Math.max(1, tests.length);
-    const countFor = brand => tests.reduce((sum, test) => {
-      const inList = test.mentionedBrands.some(item => item.includes(brand) || brand.includes(item));
-      return sum + ((inList || countBrandMention(test.answer, brand)) ? 1 : 0);
-    }, 0);
-    const targetMentions = countFor(name);
-    const competitorRows = competitors.slice(0, 6).map(brand => {
-      const mentions = countFor(brand);
-      return { name: brand, mentions, mentionRate: Math.round(mentions / totalTests * 100) };
-    }).sort((a, b) => b.mentions - a.mentions);
-    return {
-      provider: "豆包",
-      method: parsed.method || "8个不含目标商户名称的本地消费场景问题，统计豆包回答中自然出现的品牌/商户次数",
-      totalTests,
-      target: { name, mentions: targetMentions, mentionRate: Math.round(targetMentions / totalTests * 100) },
-      competitors: competitorRows,
-      tests: tests.map(test => ({
-        ...test,
-        matchedBrands: brands.filter(brand => (
-          test.mentionedBrands.some(item => item.includes(brand) || brand.includes(item)) ||
-          countBrandMention(test.answer, brand)
-        ))
-      }))
-    };
+    return scoreMentionProbe(parsed, fallbackQuestions, name, competitors);
   } catch (error) {
     return {
       provider: "豆包",
@@ -443,6 +514,16 @@ async function liveDiagnose(input) {
     .join("\n\n");
   const category = seedCategory || inferCategory(name, snippets);
   const competitors = fallbackCompetitors(category, name);
+  const mentionQuestions = [
+    `${city}${district}${category}推荐哪些品牌？`,
+    `${city}${district}附近有什么适合顺手买的${category}？`,
+    `${city}${district}${category}外卖怎么选？`,
+    `${city}${district}年轻人常买的${category}有哪些？`,
+    `${city}${district}${category}性价比推荐？`,
+    `${city}${district}逛街时买${category}推荐什么？`,
+    `${city}${district}${category}聚会团购推荐？`,
+    `${city}${district}${category}口碑比较好的商户有哪些？`
+  ];
   const mapLinks = buildMapLinks(name, city, district);
   const localEvidence = buildLocalEvidence(searchResults, name, city, district);
   const channelSummary = searchResults.reduce((acc, item) => {
@@ -468,6 +549,9 @@ ${localEvidence.candidates.map((item, index) => `[L${index + 1}] ${item.channel}
 网络资料：
 ${snippets}
 
+AI自然提及率固定测试问题（问题里不得出现“${name}”）：
+${mentionQuestions.map((question, index) => `${index + 1}. ${question}`).join("\n")}
+
 要求：
 1. 行业品类要精确，例如茶百道应为奶茶/新茶饮。
 2. 核心卖点必须结合品牌和网络资料，不要套模板。
@@ -491,10 +575,16 @@ ${snippets}
   "scenarios": [],
   "facts": [],
   "sources": [],
-  "aiAnswers": []
+  "aiAnswers": [],
+  "aiMentionProbe": {
+    "method": "8个不含目标商户名称的本地消费场景问题，统计豆包回答中自然出现的品牌/商户次数",
+    "tests": [
+      {"question": "", "answer": "", "mentionedBrands": []}
+    ]
+  }
 }`;
 
-  const answer = await callDoubao(prompt);
+  const answer = await callDoubao(prompt, { maxTokens: 2600, timeoutMs: 65000 });
   const parsed = extractJson(answer) || {};
   const cleanCompetitors = (parsed.competitors?.length ? parsed.competitors : competitors)
     .filter(item => item && !name.includes(item) && !String(item).includes(name))
@@ -505,14 +595,20 @@ ${snippets}
   const fallbackAiAnswer = Object.keys(parsed).length
     ? `豆包AI测试回答：在“${city}${district}${parsed.category || category}推荐”场景下，${name}目前更适合作为有一定本地展示基础的候选商户；主要竞争对象包括${cleanCompetitors.join("、") || "同品类商户"}。结论仍需结合地图门店、点评口碑和本地内容证据复核。`
     : `豆包AI测试回答：${String(answer || "").replace(/\s+/g, " ").trim().slice(0, 320)}`;
-  const aiMentionProbe = await buildAiMentionProbe({
-    name,
-    city,
-    district,
-    category: parsed.category || category,
-    competitors: cleanCompetitors,
-    snippets
-  });
+  const aiMentionProbe = Array.isArray(parsed.aiMentionProbe?.tests) && parsed.aiMentionProbe.tests.length
+    ? scoreMentionProbe(parsed.aiMentionProbe, mentionQuestions, name, cleanCompetitors.length ? cleanCompetitors : competitors)
+    : await buildAiMentionProbe({
+      name,
+      city,
+      district,
+      category: parsed.category || category,
+      competitors: cleanCompetitors.length ? cleanCompetitors : competitors,
+      snippets
+    });
+  const finalCompetitors = uniqueList([
+    ...cleanCompetitors,
+    ...(aiMentionProbe.competitors || []).map(item => item.name)
+  ]).slice(0, 6);
   const mentionAnswerRows = (aiMentionProbe.tests || []).map(test => (
     `豆包｜${test.question}｜${test.answer}`
   ));
@@ -542,7 +638,7 @@ ${snippets}
     searchVerticals: channelSummary,
     queryPlan: queries,
     sellingPoints: (parsed.sellingPoints || []).slice(0, 8),
-    competitors: cleanCompetitors,
+    competitors: finalCompetitors,
     scenarios: (parsed.scenarios || []).slice(0, 8),
     facts: (parsed.facts || []).slice(0, 10),
     sources: (parsed.sources?.length ? parsed.sources : searchResults.map(item => `${item.title}｜${item.snippet}｜${item.url}`)).slice(0, 8),
@@ -597,10 +693,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/status") {
+      const aiProviders = getAiProviders();
       sendJson(res, 200, {
         ok: true,
         searchConfigured: Boolean(process.env.BING_SEARCH_API_KEY || process.env.SERPAPI_KEY),
         doubaoConfigured: Boolean(process.env.ARK_API_KEY && (process.env.ARK_MODEL || process.env.DOUBAO_MODEL)),
+        aiConfigured: aiProviders.length > 0,
+        aiProviders: aiProviders.map(provider => ({ name: provider.name, models: provider.models })),
         accessCodeEnabled: Boolean(ACCESS_CODE),
         rateLimitPerHour: RATE_LIMIT_PER_HOUR,
         cacheTtlHours: CACHE_TTL_HOURS
