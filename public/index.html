@@ -44,6 +44,7 @@
     .brand p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
     .actions { display: flex; flex-wrap: wrap; gap: 8px; }
     button { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid rgba(57,215,158,.42); border-radius: 8px; padding: 10px 14px; color: #04100d; background: linear-gradient(135deg, var(--green), var(--cyan)); font-weight: 850; cursor: pointer; box-shadow: 0 14px 32px rgba(57,215,158,.16); }
+    button:disabled { opacity: .58; cursor: wait; box-shadow: none; }
     button.secondary { color: var(--ink); background: rgba(255,255,255,.06); border-color: var(--line2); box-shadow: none; }
     button.ghost { color: var(--muted); background: transparent; border-color: var(--line); box-shadow: none; }
     .hero { border: 1px solid var(--line); border-radius: 12px; padding: 22px; margin-bottom: 14px; background: linear-gradient(125deg, rgba(57,215,158,.14), rgba(76,201,240,.08) 42%, rgba(255,255,255,.045)); box-shadow: var(--shadow); position: relative; overflow: hidden; }
@@ -130,7 +131,7 @@
             <div class="status-card warn">缓存/限流<strong>检测中</strong></div>
           </div>
           <label>访问码<input id="accessCode" type="password" placeholder="公网部署后填写访问码；本地未启用可留空"></label>
-          <div class="note" id="probeStatus">输入名称并选择城市、区域后，优先进行地图门店、点评口碑、品牌产品、本地内容和竞品多通道检索。</div>
+          <div class="note" id="probeStatus">输入名称并选择城市、区域后，生成诊断会优先使用缓存；联网探测会强制刷新地图门店、点评口碑、品牌产品、本地内容和竞品多通道检索。</div>
           <div class="actions">
             <button class="ghost" id="locateMe" type="button"><svg viewBox="0 0 24 24"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/><circle cx="12" cy="12" r="5"/></svg>定位</button>
           </div>
@@ -264,21 +265,29 @@
     }
     function renderRuntimeStatus(status) {
       const card = (label, ok, value) => `<div class="status-card ${ok ? "ok" : "warn"}">${label}<strong>${value}</strong></div>`;
+      const aiOk = status?.aiConfigured ?? status?.doubaoConfigured;
+      const aiName = status?.aiProviders?.length ? status.aiProviders.map(item => item.name).join("/") : (status?.doubaoConfigured ? "豆包" : "未配置");
       $("runtimeStatus").innerHTML = [
-        card("豆包", status?.doubaoConfigured, status?.doubaoConfigured ? "已接入" : "未配置"),
+        card("AI模型", aiOk, aiOk ? aiName : "未配置"),
         card("搜索", status?.searchConfigured, status?.searchConfigured ? "已接入" : "未配置"),
         card("访问码", status?.accessCodeEnabled, status?.accessCodeEnabled ? "已启用" : "未启用"),
         card("缓存/限流", true, `${status?.cacheTtlHours || 24}h / ${status?.rateLimitPerHour || 30}次`)
       ].join("");
     }
     async function loadRuntimeStatus() {
-      if (location.protocol === "file:") return renderRuntimeStatus({ doubaoConfigured:false, searchConfigured:false, accessCodeEnabled:false, cacheTtlHours:24, rateLimitPerHour:30 });
+      if (location.protocol === "file:") return renderRuntimeStatus({ aiConfigured:false, doubaoConfigured:false, searchConfigured:false, accessCodeEnabled:false, cacheTtlHours:24, rateLimitPerHour:30 });
       try {
         const res = await fetch("/api/status", { cache: "no-store" });
         renderRuntimeStatus(await res.json());
       } catch {
-        renderRuntimeStatus({ doubaoConfigured:false, searchConfigured:false, accessCodeEnabled:false, cacheTtlHours:24, rateLimitPerHour:30 });
+        renderRuntimeStatus({ aiConfigured:false, doubaoConfigured:false, searchConfigured:false, accessCodeEnabled:false, cacheTtlHours:24, rateLimitPerHour:30 });
       }
+    }
+    function setBusy(isBusy) {
+      ["runAudit", "autoProbe", "loadSample"].forEach(id => {
+        const el = $(id);
+        if (el) el.disabled = isBusy;
+      });
     }
     async function autoPopulateAndRun(force = false) {
       const live = await tryLiveDiagnose(force);
@@ -329,7 +338,10 @@
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 180000);
       try {
-        $("probeStatus").textContent = "正在联网诊断：地图门店、点评口碑、品牌产品、本地内容和竞品检索中，通常需要 30-120 秒...";
+        setBusy(true);
+        $("probeStatus").textContent = force
+          ? "正在强制刷新：地图门店、点评口碑、品牌产品、本地内容和豆包提及测试并行处理中，通常需要 20-70 秒..."
+          : "正在生成诊断：优先读取缓存；无缓存时进行多通道搜索和豆包提及测试，通常需要 20-70 秒...";
         const accessCode = $("accessCode").value.trim();
         const res = await fetch("/api/live-diagnose", {
           method: "POST",
@@ -359,6 +371,7 @@
         return false;
       } finally {
         clearTimeout(timeout);
+        setBusy(false);
       }
     }
     function getInput() {
@@ -533,9 +546,9 @@
     $("loadSample").addEventListener("click", async () => {
       $("city").value = sample.city; fillDistrictOptions(sample.city, sample.district);
       for (const [k,v] of Object.entries(sample)) if (k !== "city" && k !== "district") $(k).value = v;
-      await autoPopulateAndRun(true);
+      await autoPopulateAndRun(false);
     });
-    $("runAudit").addEventListener("click", () => autoPopulateAndRun(true));
+    $("runAudit").addEventListener("click", () => autoPopulateAndRun(false));
     $("autoProbe").addEventListener("click", () => autoPopulateAndRun(true));
     $("locateMe").addEventListener("click", () => {
       if (!navigator.geolocation) {
@@ -562,7 +575,7 @@
       latestLiveExtras = {};
       currentGeoPosition = null;
       $("geoStatus").textContent = "定位可辅助核验当前设备位置，不会替代所选城市和区域。";
-      $("probeStatus").textContent = "输入名称并选择城市、区域后，优先进行地图门店、点评口碑、品牌产品、本地内容和竞品多通道检索。";
+      $("probeStatus").textContent = "输入名称并选择城市、区域后，生成诊断会优先使用缓存；联网探测会强制刷新地图门店、点评口碑、品牌产品、本地内容和竞品多通道检索。";
       ["summaryPanel","mapPanel","competitorPanel","findingsPanel","recommendPanel","evidencePanel"].forEach(id => $(id).innerHTML = id === "summaryPanel" ? '<div class="empty">等待生成诊断</div>' : "");
     });
     fillCityOptions();
